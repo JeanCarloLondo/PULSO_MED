@@ -1,0 +1,75 @@
+# ---------- Secretos ----------
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+env/
+.python-version
+
+# ---------- Jupyter ----------
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ---------- Datos ----------
+# Datasets crudos: no se versionan (son grandes y públicos)
+data/raw/*
+!data/raw/README.md
+!data/raw/.gitkeep
+
+# Outputs procesados locales
+data/processed/*
+!data/processed/README.md
+!data/processed/.gitkeep
+
+# Muestras (estas SÍ se versionan, son small)
+# data/samples/  -> NO ignorar
+
+# ---------- Spark / Iceberg / Hadoop ----------
+spark-warehouse/
+metastore_db/
+derby.log
+*.crc
+
+# ---------- IDEs ----------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---------- macOS / Windows / Linux basura ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Docker logs / state ----------
+*.log
+logs/
+
+# ---------- Outputs de modelos ML ----------
+models/checkpoints/
+mlruns/
+
+# ---------- Cobertura de tests ----------
+.coverage
+htmlcov/
+.pytest_cache/
+
+# ---------- Salidas de Flink/Kafka local ----------
+flink-checkpoints/
+kafka-data/
