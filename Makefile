@@ -17,7 +17,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 COMPOSE := docker compose
-COMPOSE_EXEC := MSYS_NO_PATHCONV=1 $(COMPOSE) exec
+COMPOSE_EXEC    := MSYS_NO_PATHCONV=1 $(COMPOSE) exec
 SERVICE ?=
 
 ENV_CHECK := @if [ ! -f .env ]; then \
@@ -108,11 +108,62 @@ pyspark: ## Abrir pyspark interactivo
 jupyter: ## Mostrar URL de Jupyter
 	@echo "Jupyter Lab: http://localhost:8888 (sin token en la imagen tabulario/spark-iceberg)"
 
-# ---------- Sprint 1+ (placeholders) --------------------------
+# ---------- Sprint 1 — datos ----------------------------------
 
-pipeline-batch: ## [Sprint 1] Pipeline Bronze → Silver → Gold
-	@echo "TODO: implementado en Sprint 1"
-	@exit 1
+download-data: ## [Sprint 1] Descargar los 6 datasets crudos a data/raw/
+	@bash scripts/download_datasets.sh
+
+# ---------- Sprint 1 — setup ----------------------------------
+
+init-namespaces: env-check ## [Sprint 1] Crear namespaces pulsomed.bronze/silver/gold en Iceberg
+	@echo "→ Creando namespaces Medallion en el catálogo Iceberg..."
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/scripts/init_iceberg_namespaces.py
+
+# ---------- Sprint 1 — Bronze ---------------------------------
+
+ingest-bronze-geomedellin: env-check ## [Sprint 1] Ingestar GeoMedellín → Bronze
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/bronze/ingest_geomedellin.py
+
+ingest-bronze-simm: env-check ## [Sprint 1] Ingestar SIMM → Bronze
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/bronze/ingest_simm.py
+
+ingest-bronze-siata: env-check ## [Sprint 1] Ingestar SIATA histórico → Bronze
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/bronze/ingest_siata.py
+
+ingest-bronze-medata: env-check ## [Sprint 1] Ingestar MEData incidentes → Bronze
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/bronze/ingest_medata.py
+
+ingest-bronze-metro: env-check ## [Sprint 1] Ingestar Metro afluencia → Bronze
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/bronze/ingest_metro.py
+
+ingest-bronze-encicla: env-check ## [Sprint 1] Ingestar EnCicla → Bronze (aplica HMAC)
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/bronze/ingest_encicla.py
+
+ingest-bronze-all: env-check ## [Sprint 1] Ingestar todas las fuentes → Bronze en orden
+	$(MAKE) ingest-bronze-geomedellin
+	$(MAKE) ingest-bronze-simm
+	$(MAKE) ingest-bronze-siata
+	$(MAKE) ingest-bronze-medata
+	$(MAKE) ingest-bronze-metro
+	$(MAKE) ingest-bronze-encicla
+
+# ---------- Sprint 1 — Silver ---------------------------------
+
+transform-silver: env-check ## [Sprint 1] Transformar Bronze → Silver (todas las fuentes)
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/silver/transform_all.py
+
+# ---------- Sprint 1 — Gold -----------------------------------
+
+build-gold: env-check ## [Sprint 1] Construir capa Gold (preguntas B-1..B-4)
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/gold/build_all.py
+
+# ---------- Sprint 1 — Pipeline completo ----------------------
+
+pipeline-batch: init-namespaces ingest-bronze-all transform-silver build-gold ## [Sprint 1] Pipeline completo Bronze → Silver → Gold
+	@echo ""
+	@echo "✅ Pipeline batch completo. Capa Gold lista para consultas."
+
+# ---------- Sprint 2+ — Streaming -----------------------------
 
 pipeline-streaming: ## [Sprint 2+] Productores Kafka + jobs Flink
 	@echo "TODO: implementado en Sprint 2"

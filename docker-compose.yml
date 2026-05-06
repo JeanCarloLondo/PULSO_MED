@@ -113,8 +113,12 @@ services:
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       AWS_REGION: ${AWS_REGION:-us-east-1}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      HMAC_USER_PSEUDO_SECRET: ${HMAC_USER_PSEUDO_SECRET:-cambia-esta-clave-antes-de-la-entrega}
     volumes:
       - ./src:/workspace/src
+      - ./scripts:/workspace/scripts
       - ./tests:/workspace/tests
       - ./notebooks:/home/iceberg/notebooks
       - ./data:/workspace/data
