@@ -8,7 +8,8 @@ Nunca escribir strings de catálogo, rutas o nombres de colecciones fuera de est
 """
 
 import os
-from pyspark.sql import SparkSession
+# pyspark se importa dentro de crear_spark_session para que este módulo
+# pueda usarse desde contenedores sin Spark instalado (ej. stream-runner).
 
 # ── Iceberg REST Catalog ─────────────────────────────────────────────────────
 CATALOG        = "demo"                   # catálogo pre-configurado en tabulario/spark-iceberg
@@ -84,11 +85,12 @@ CRS_WGS84    = "EPSG:4326"
 CRS_COLOMBIA = "EPSG:3116"  # Colombia Bogotá / Transverse Mercator
 
 
-def crear_spark_session(nombre_app: str) -> SparkSession:
+def crear_spark_session(nombre_app: str):
     """
     Devuelve una SparkSession apuntando al REST Catalog de Iceberg y a MinIO.
     Llamar una sola vez por proceso. Todos los scripts batch deben usar esta función.
     """
+    from pyspark.sql import SparkSession  # import diferido (ver header)
     return (
         SparkSession.builder
         .appName(nombre_app)

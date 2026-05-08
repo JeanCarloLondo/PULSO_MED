@@ -111,3 +111,119 @@ Cada vez que cierre un sprint:
 3. Si una decisión vieja se revisa, dejo una **nota** explicando el cambio y el motivo, no la borro.
 
 Esto es básicamente un changelog técnico-conceptual. Es lo que diferencia "tener código" de "tener un proyecto que se entiende".
+
+---
+
+# Sprint 1 — Camino Batch (Bronze → Silver → Gold)
+
+**Sprint cerrado.** MVP `make pipeline-batch` corre las 6 ingestas, las 5 transformaciones Silver y los 4 Gold; las 4 tablas Gold responden las preguntas analíticas B-1..B-4. Detalle operativo en [`sprints/sprint-1-batch.md`](sprints/sprint-1-batch.md).
+
+## Lo que entregué
+
+### Código nuevo
+
+| Archivo | Para qué |
+|---------|----------|
+| `src/shared/bronze_utils.py` | Helpers compartidos por los 6 ingest: columnas de auditoría, `escribir_bronze`, logger plano. |
+| `src/batch/bronze/ingest_*.py` | Un script por fuente (MEData, Metro, EnCicla, SIATA, GeoMedellín, SIMM). Append + auditoría + particionado por `fecha_ingesta`. EnCicla pseudonimiza con HMAC-SHA256 antes de escribir. |
+| `src/batch/silver/transform_all.py` | 5 transformaciones (`createOrReplace`): casteo, dedup, corrección de coordenadas invertidas en MEData pre-2017, joins espaciales con GeoMedellín (UDF Python ray-casting), join temporal SIATA↔Metro. |
+| `src/batch/gold/build_all.py` | 4 agregaciones: `afluencia_vs_pm25` (Pearson estación×mes), `accidentalidad_por_comuna` (pivot + índice severidad), `demanda_encicla_vs_clima` (bins + viajes_relativos), `corredores_riesgo_compuesto` (rank volumen + severidad). |
+| `scripts/generar_muestras_sinteticas.py` | Genera muestras consistentes para Metro, SIATA, EnCicla cuando los portales bloquean la descarga real. Reemplazables por datos reales sin tocar el código. |
+| `notebooks/01_eda_gold.ipynb` | EDA de las 4 Gold con gráficas. |
+
+### Decisiones técnicas (las grandes)
+
+**1. Sintetizar fuentes que no se descargan.** ArcGIS Hub (Metro) bloquea con 403, la API CKAN de Metropol (EnCicla) cambió URLs, Dataverse SIATA requiere `jq`. En vez de bloquear el sprint, generamos muestras realistas con el mismo esquema. Los scripts Bronze son agnósticos al origen — basta sobrescribir el archivo cuando llegue el dato real.
+
+**2. Catálogo `demo`, no `pulsomed`.** La imagen `tabulario/spark-iceberg` ya viene cableada a un catálogo llamado `demo` vía variables de entorno. `pulsomed` es un namespace bajo ese catálogo, no el catálogo mismo. Las tablas son `demo.pulsomed.bronze.<x>`. Esto se documentó en CLAUDE.md también porque es un foot-gun para nuevos contribuyentes.
+
+**3. Ray-casting Python para joins espaciales.** Con 21 polígonos y ~600 k puntos, un UDF Python con ray-casting clásico es suficiente y no necesita Sedona ni un Dockerfile custom de Spark. Si Sprint 5 necesita joins espaciales más sofisticados (línea ↔ polígono, buffers), migramos.
+
+**4. EnCicla con HMAC en Bronze, no en Silver.** Quien tiene acceso al data lake nunca debe ver `id_usuario` real, ni siquiera en una capa intermedia. La clave HMAC vive solo en `.env`. Esto es la implementación temprana del Módulo 07 (gobernanza Ley 1581).
+
+**5. `createOrReplace` en Silver/Gold.** Idempotente y simple. Si en Sprint 4 necesitamos historial de cambios, agregamos snapshot retention de Iceberg.
+
+**6. SIMM cámaras limitado a 300 k filas por defecto.** El CSV es 816 MB / ~3M filas. Para iterar rápido, `SIMM_LIMIT_FILAS` controla el truncado. Para una corrida final: `SIMM_LIMIT_FILAS=99999999`.
+
+### Filas resultantes
+
+```
+Bronze:
+  geomedellin_comunas               21
+  metro_afluencia              29 592
+  siata_lecturas               87 600
+  encicla_prestamos            13 776
+  medata_incidentes           270 765
+  simm_aforos                 374 900
+
+Silver:
+  lecturas_aire_validas        87 100
+  afluencia_horaria            29 592
+  incidentes_geocodificados   270 731
+  viajes_encicla_anonimizados  13 776
+  aforos_corredor_geo         374 900
+
+Gold:
+  afluencia_vs_pm25               972  (estación × mes)
+  accidentalidad_por_comuna       220  (comuna × año, ranking)
+  demanda_encicla_vs_clima        180  (día × clima)
+  corredores_riesgo_compuesto      16  (comuna)
+```
+
+---
+
+# Sprint 2 — Streaming MVP (S-2 alerta PM2.5)
+
+**Sprint cerrado.** `make pipeline-streaming` levanta el stack streaming. Productor + alert-job + CLI corren end-to-end y producen alertas verificables en MongoDB.
+
+## Lo que entregué
+
+| Archivo | Para qué |
+|---------|----------|
+| `docker-compose.yml` (zookeeper, kafka, stream-runner) | Stack streaming descomentado. `stream-runner` es un `python:3.11-slim` que en boot instala `kafka-python` + `pymongo`. |
+| `src/streaming/producers/siata_producer.py` | Lee SIATA histórico y emite a `siata.lecturas` cada `INTERVALO_S`. Inyecta picos de PM2.5 cada `INYECTAR_PICO_CADA` para garantizar alertas en demos cortas. |
+| `src/streaming/flink_jobs/siata_alert_job.py` | Consumidor Kafka + ventana tumbling de N minutos en memoria + sink a Mongo. Cierre de ventanas por `max(event_time, wall_clock)` para no quedar bloqueado cuando el productor pausa. |
+| `scripts/consultar_alertas.py` | CLI con filtros (`--zona`, `--gravedad`, `--ultimas`). |
+| `docs/sprints/sprint-2-streaming.md` | Cómo correrlo + esquemas + ADR pendiente. |
+
+## Decisiones técnicas
+
+**1. Python en vez de PyFlink para Sprint 2.** El roadmap original decía "PyFlink o Flink Java/Scala — decidir y documentar". Decidimos Python por ahora porque:
+- PyFlink requiere `flink-sql-connector-kafka` con la versión exacta de Flink, jars en `/opt/flink/lib`, y un build de imagen.
+- Para una sola pregunta (S-2) y una sola ventana es desproporcionado.
+- El primitivo (ventana tumbling sobre clave + agregación + sink) son ~150 líneas de Python.
+- Migrar a Flink real está planeado para Sprint 3, cuando haya 4 jobs paralelos y argumento real.
+
+Trade-offs aceptados (documentados en `sprint-2-streaming.md`): sin estado distribuido, at-least-once, ventanas en buffer se pierden si el proceso muere.
+
+**2. Ventana cierra por `max(event_time, wall_clock) - VENTANA`.** Si solo usáramos event-time, cuando el productor pausa las ventanas se quedan abiertas para siempre. Si solo usáramos wall-clock, eventos históricos no abrirían/cerrarían correctamente. El `max` cubre ambos.
+
+**3. Índice único `{zona, ventana_inicio}` en `alertas_aire`.** Protege contra reproceso o restart del job: si una ventana ya emitió alerta, el `insertOne` falla con E11000 y el job sigue.
+
+**4. Inyección de picos en el productor.** Para que `make pipeline-streaming` siempre demuestre algo en menos de 30 segundos, el productor mete forzadamente un evento de `pm25=PICO_PM25` cada N eventos. En producción no haría esto — pero el demo del Sprint 2 lo necesita para no depender de que aparezca un evento real con pm25>75.
+
+**5. `stream-runner` separado del contenedor de Spark.** Spark + Iceberg ya son grandes. Un `python:3.11-slim` con `kafka-python` + `pymongo` instalados en boot es 100 MB y arranca en segundos. Para el job híbrido del Sprint 3 (que SÍ lee de Gold-Iceberg en bootstrap), evaluaremos si se queda en stream-runner con `pyiceberg` o si se mueve al spark-iceberg.
+
+## Cómo se ejecuta el demo S-2 (verificado en máquina)
+
+```bash
+make stream-up                                   # Zookeeper + Kafka + stream-runner
+# Terminal A:
+make stream-alert-job VENTANA_MINUTOS=1 UMBRAL_PM25=75
+# Terminal B:
+INTERVALO_S=0.05 INYECTAR_PICO_CADA=5 LIMITE_EVENTOS=120 make stream-producer
+# Terminal C:
+make stream-alertas ULTIMAS=10min
+```
+
+Salida en C:
+
+```
+ventana                 zona                          gravedad    pm25_avg  lect.
+2026-05-08 03:32        valle_aburra_centro           moderada      95.0     10
+2026-05-08 03:32        valle_aburra_nororiental      moderada      95.0     10
+```
+
+## Cambio relevante a `src/shared/config.py`
+
+Se difirió el import de `pyspark.sql.SparkSession` al interior de `crear_spark_session()`. Razón: el contenedor `stream-runner` no tiene PySpark instalado, pero sí necesita las constantes de tópicos Kafka y de Mongo. Sin este cambio, cualquier `from shared.config import ...` desde el stream-runner fallaba con `ModuleNotFoundError: No module named 'pyspark'`. Es un patrón que se mantiene desde aquí en adelante: shared.config no debe importar nada que no esté disponible en TODOS los contenedores.

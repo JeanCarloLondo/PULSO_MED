@@ -73,3 +73,6 @@ htmlcov/
 # ---------- Salidas de Flink/Kafka local ----------
 flink-checkpoints/
 kafka-data/
+
+# ---------- Claude Code local ----------
+.claude/

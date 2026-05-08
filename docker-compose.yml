@@ -149,66 +149,64 @@ services:
       start_period: 10s
 
   # ======================================================================
-  # [SPRINT 2+]  Streaming stack — descomentar al iniciar el Sprint 2
+  # [SPRINT 2+]  Streaming stack
   # ======================================================================
 
-  # zookeeper:
-  #   image: confluentinc/cp-zookeeper:7.5.0
-  #   container_name: pulsomed-zookeeper
-  #   environment:
-  #     ZOOKEEPER_CLIENT_PORT: 2181
-  #     ZOOKEEPER_TICK_TIME: 2000
-  #   networks:
-  #     - pulsomed-net
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: pulsomed-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - pulsomed-net
 
-  # kafka:
-  #   image: confluentinc/cp-kafka:7.5.0
-  #   container_name: pulsomed-kafka
-  #   depends_on:
-  #     - zookeeper
-  #   ports:
-  #     - "9092:9092"
-  #     - "29092:29092"
-  #   environment:
-  #     KAFKA_BROKER_ID: 1
-  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-  #     KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
-  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-  #     KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-  #   networks:
-  #     - pulsomed-net
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: pulsomed-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+      - "${KAFKA_HOST_PORT:-29092}:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - pulsomed-net
 
-  # flink-jobmanager:
-  #   image: flink:1.18
-  #   container_name: pulsomed-flink-jobmanager
-  #   ports:
-  #     - "8081:8081"
-  #   command: jobmanager
-  #   environment:
-  #     - |
-  #       FLINK_PROPERTIES=
-  #       jobmanager.rpc.address: flink-jobmanager
-  #       state.backend: filesystem
-  #       state.checkpoints.dir: file:///tmp/flink-checkpoints
-  #   volumes:
-  #     - ./src/streaming/flink_jobs:/opt/flink/jobs
-  #   networks:
-  #     - pulsomed-net
-
-  # flink-taskmanager:
-  #   image: flink:1.18
-  #   container_name: pulsomed-flink-taskmanager
-  #   depends_on:
-  #     - flink-jobmanager
-  #   command: taskmanager
-  #   environment:
-  #     - |
-  #       FLINK_PROPERTIES=
-  #       jobmanager.rpc.address: flink-jobmanager
-  #       taskmanager.numberOfTaskSlots: 2
-  #   networks:
-  #     - pulsomed-net
+  # Para Sprint 2 usamos un "Flink" en Python pequeño que vive como un
+  # consumidor Kafka + sink Mongo dentro de un contenedor genérico Python.
+  # Esto evita la complejidad de subir Flink JobManager/TaskManager + PyFlink
+  # y entregar la pregunta S-2 con los mismos primitivos de ventanas.
+  # En Sprint 3 migraremos a Flink real cuando haya 4 jobs paralelos.
+  stream-runner:
+    image: python:3.11-slim
+    container_name: pulsomed-stream-runner
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - mongodb
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_HOST: mongodb
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./src:/workspace/src
+      - ./scripts:/workspace/scripts
+      - ./data:/workspace/data
+    working_dir: /workspace
+    command: ["sh", "-c", "pip install --quiet kafka-python pymongo && tail -f /dev/null"]
+    networks:
+      - pulsomed-net
 
   # ======================================================================
   # [SPRINT 5]  Trino (bonus, +2 pt) — descomentar en el Sprint 5

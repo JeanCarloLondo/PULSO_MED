@@ -54,7 +54,10 @@ Si `make smoke` pasa, el Sprint 0 está terminado y pueden pasar al Sprint 1.
 |-----------|----------------|
 | [`docs/00-roadmap.md`](docs/00-roadmap.md) | Plan de los 6 sprints del proyecto. Léelo primero. |
 | [`docs/01-arquitectura.md`](docs/01-arquitectura.md) | Diagrama y explicación del stack técnico. |
-| [`docs/sprints/sprint-0-setup.md`](docs/sprints/sprint-0-setup.md) | Guía paso a paso del Sprint 0 (este sprint). |
+| [`docs/sprints/sprint-0-setup.md`](docs/sprints/sprint-0-setup.md) | Guía paso a paso del Sprint 0 (setup). |
+| [`docs/sprints/sprint-1-batch.md`](docs/sprints/sprint-1-batch.md) | Sprint 1: pipeline Bronze → Silver → Gold y respuestas B-1..B-4. |
+| [`docs/sprints/sprint-2-streaming.md`](docs/sprints/sprint-2-streaming.md) | Sprint 2: streaming MVP (alerta PM2.5, pregunta S-2). |
+| [`docs/instructivo-maestro.md`](docs/instructivo-maestro.md) | Changelog técnico-conceptual: qué se entregó cada sprint y por qué. |
 | [`docs/decisiones/`](docs/decisiones/) | ADRs (Architecture Decision Records) — se llenan en sprints futuros. |
 
 ---

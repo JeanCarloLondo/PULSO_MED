@@ -163,8 +163,33 @@ pipeline-batch: init-namespaces ingest-bronze-all transform-silver build-gold ##
 	@echo ""
 	@echo "✅ Pipeline batch completo. Capa Gold lista para consultas."
 
-# ---------- Sprint 2+ — Streaming -----------------------------
+# ---------- Sprint 1 — Datos sintéticos (cuando descarga real falla) -----
 
-pipeline-streaming: ## [Sprint 2+] Productores Kafka + jobs Flink
-	@echo "TODO: implementado en Sprint 2"
-	@exit 1
+generate-samples: ## [Sprint 1] Generar muestras sintéticas para Metro/SIATA/EnCicla
+	@PYTHONIOENCODING=utf-8 python scripts/generar_muestras_sinteticas.py
+
+# ---------- Sprint 2 — Streaming MVP --------------------------
+
+stream-up: ## [Sprint 2] Levantar Zookeeper + Kafka + stream-runner
+	$(COMPOSE) up -d zookeeper kafka stream-runner
+	@echo "→ Esperando a que stream-runner instale dependencias..."
+	@until $(COMPOSE) exec -T stream-runner python -c "import kafka, pymongo" 2>/dev/null; do sleep 2; done
+	@echo "✅ Streaming stack listo."
+
+stream-alert-job: env-check ## [Sprint 2] Correr el job Flink-like de alertas (foreground)
+	$(COMPOSE_EXEC) -e VENTANA_MINUTOS=$${VENTANA_MINUTOS:-10} -e UMBRAL_PM25=$${UMBRAL_PM25:-75} \
+		stream-runner python -u /workspace/src/streaming/flink_jobs/siata_alert_job.py
+
+stream-producer: env-check ## [Sprint 2] Correr el productor SIATA (foreground)
+	$(COMPOSE_EXEC) -e INTERVALO_S=$${INTERVALO_S:-1} -e INYECTAR_PICO_CADA=$${INYECTAR_PICO_CADA:-30} \
+		stream-runner python -u /workspace/src/streaming/producers/siata_producer.py
+
+stream-alertas: env-check ## [Sprint 2] Consultar últimas alertas en MongoDB
+	$(COMPOSE_EXEC) stream-runner python /workspace/scripts/consultar_alertas.py --ultimas $${ULTIMAS:-1h}
+
+pipeline-streaming: stream-up ## [Sprint 2] Stack streaming completo arriba
+	@echo ""
+	@echo "Para correr el demo S-2 (alerta PM2.5):"
+	@echo "  Terminal 1:  make stream-alert-job"
+	@echo "  Terminal 2:  make stream-producer"
+	@echo "  Terminal 3:  make stream-alertas ULTIMAS=10min"
