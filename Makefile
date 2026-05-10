@@ -193,3 +193,71 @@ pipeline-streaming: stream-up ## [Sprint 2] Stack streaming completo arriba
 	@echo "  Terminal 1:  make stream-alert-job"
 	@echo "  Terminal 2:  make stream-producer"
 	@echo "  Terminal 3:  make stream-alertas ULTIMAS=10min"
+
+# ---------- Sprint 1.5 — datos reales -------------------------
+
+datos-reales: ## [Sprint 1.5] Descargar datos reales: Metro xlsx + SIATA Dataverse + EnCicla OSM
+	@echo "→ Metro afluencia (xlsx oficial Metro de Medellín)..."
+	@PYTHONIOENCODING=utf-8 python scripts/descargar_metro_afluencia_real.py
+	@echo ""
+	@echo "→ SIATA PM2.5 + PM10 (Dataverse oficial)..."
+	@PYTHONIOENCODING=utf-8 python scripts/descargar_siata_real.py
+	@echo ""
+	@echo "→ EnCicla estaciones (OpenStreetMap Overpass)..."
+	@PYTHONIOENCODING=utf-8 python scripts/descargar_encicla_estaciones.py
+	@echo ""
+	@echo "✅ Datos reales en data/raw/. Próximo paso: make exportar-referencias"
+
+exportar-referencias: ## [Sprint 3] Pre-computar percentiles Metro + corredores riesgo desde CSV reales
+	@PYTHONIOENCODING=utf-8 python scripts/exportar_referencias_streaming.py
+
+# ---------- Sprint 3 — Streaming completo ---------------------
+
+stream-encicla-producer: env-check ## [Sprint 3] Productor EnCicla disponibilidad (S-1)
+	$(COMPOSE_EXEC) -e INTERVALO_S=$${INTERVALO_S:-1.0} -e INYECTAR_PICO_CADA=$${INYECTAR_PICO_CADA:-20} \
+		stream-runner python -u /workspace/src/streaming/producers/encicla_producer.py
+
+stream-encicla-job: env-check ## [Sprint 3] Job ventana sliding S-1
+	$(COMPOSE_EXEC) -e VENTANA_MINUTOS=$${VENTANA_MINUTOS:-1} -e PASO_SEGUNDOS=$${PASO_SEGUNDOS:-30} \
+		-e UMBRAL_BICIS=$${UMBRAL_BICIS:-2} \
+		stream-runner python -u /workspace/src/streaming/flink_jobs/encicla_disponibilidad_job.py
+
+stream-simm-producer: env-check ## [Sprint 3] Productor SIMM aforos (S-3)
+	$(COMPOSE_EXEC) -e INTERVALO_S=$${INTERVALO_S:-1.0} -e INYECTAR_PICO_CADA=$${INYECTAR_PICO_CADA:-30} \
+		stream-runner python -u /workspace/src/streaming/producers/simm_producer.py
+
+stream-simm-job: env-check ## [Sprint 3] Job tumbling S-3 + alerta corredor activo
+	$(COMPOSE_EXEC) -e VENTANA_MINUTOS=$${VENTANA_MINUTOS:-5} -e UMBRAL_INTENSIDAD=$${UMBRAL_INTENSIDAD:-80} \
+		stream-runner python -u /workspace/src/streaming/flink_jobs/simm_aforo_job.py
+
+stream-metro-producer: env-check ## [Sprint 3] Productor Metro afluencia (S-4)
+	$(COMPOSE_EXEC) -e INTERVALO_S=$${INTERVALO_S:-0.3} -e EVENTOS_POR_HORA=$${EVENTOS_POR_HORA:-12} \
+		stream-runner python -u /workspace/src/streaming/producers/metro_producer.py
+
+stream-metro-job: env-check ## [Sprint 3] Job tumbling S-4 (afluencia Metro RT)
+	$(COMPOSE_EXEC) -e VENTANA_MINUTOS=$${VENTANA_MINUTOS:-5} \
+		stream-runner python -u /workspace/src/streaming/flink_jobs/metro_afluencia_job.py
+
+stream-hibrido: env-check ## [Sprint 3] Job híbrido batch↔streaming (sección 4.3 propuesta)
+	$(COMPOSE_EXEC) -e FACTOR_AFLUENCIA=$${FACTOR_AFLUENCIA:-0.7} -e UMBRAL_LLUVIA_MM=$${UMBRAL_LLUVIA_MM:-0.3} \
+		stream-runner python -u /workspace/src/streaming/flink_jobs/job_hibrido.py
+
+dashboard: ## [Sprint 3] Levantar dashboard Streamlit (host)
+	@which streamlit > /dev/null || pip install streamlit pymongo pandas pydeck
+	@MONGO_HOST=localhost streamlit run app/dashboard.py
+
+pipeline-streaming-completo: stream-up exportar-referencias ## [Sprint 3] Stack streaming + referencias listas
+	@echo ""
+	@echo "✅ Stack streaming arriba y referencias generadas."
+	@echo ""
+	@echo "Lanzar productores y jobs en paralelo (cada uno en una terminal):"
+	@echo "  Terminal 1:  make stream-producer            # SIATA (S-2)"
+	@echo "  Terminal 2:  make stream-alert-job"
+	@echo "  Terminal 3:  make stream-encicla-producer    # EnCicla (S-1)"
+	@echo "  Terminal 4:  make stream-encicla-job"
+	@echo "  Terminal 5:  make stream-simm-producer       # SIMM (S-3)"
+	@echo "  Terminal 6:  make stream-simm-job"
+	@echo "  Terminal 7:  make stream-metro-producer      # Metro (S-4)"
+	@echo "  Terminal 8:  make stream-metro-job"
+	@echo "  Terminal 9:  make stream-hibrido             # 4.3 batch↔stream"
+	@echo "  Terminal 10: make dashboard                  # Streamlit"

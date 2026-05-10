@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pulso Medellín is a course project (EAFIT, ST1630 — Sistemas Intensivos en Datos) that integrates six public mobility data sources for the Aburrá Valley into a hybrid platform: a **Lakehouse Medallion** (Bronze → Silver → Gold over Apache Iceberg + MinIO) for analytical batch questions, plus a **streaming path** (Kafka + Flink + MongoDB, planned for Sprint 2+) for operational real-time questions.
 
-Work is organized in **6 sprints**, tracked in `docs/00-roadmap.md`. As of last commit Sprints 0-2 are closed. Sprint 3 (streaming completo + integración batch↔streaming) is the next one.
+Work is organized in **6 sprints**, tracked in `docs/00-roadmap.md`. As of last commit Sprints 0-3 are closed (incluyendo el rescate de datos reales en Sprint 1.5). Sprint 4 (ADRs Lambda/Kappa + Delta/Iceberg, MapReduce legacy, refactor Bronze/Silver/Gold con datos reales) is the next one.
 
 ## Common commands
 
@@ -40,6 +40,27 @@ make stream-up                                              # Zookeeper + Kafka 
 make stream-alert-job VENTANA_MINUTOS=1 UMBRAL_PM25=75      # consumidor + ventana
 make stream-producer INTERVALO_S=0.05 INYECTAR_PICO_CADA=5  # productor con picos
 make stream-alertas ULTIMAS=10min                           # CLI a Mongo
+```
+
+Sprint 1.5 datos reales (idempotente — sólo descarga lo que falta):
+
+```bash
+make datos-reales                # Metro xlsx (ArcGIS DCAT) + SIATA Dataverse + EnCicla OSM
+make exportar-referencias        # JSONs derivados de los CSV reales (para Sprint 3 jobs)
+```
+
+Sprint 3 streaming completo (preguntas S-1..S-4 + job híbrido batch↔streaming):
+
+```bash
+make pipeline-streaming-completo                  # stack + referencias precomputadas
+
+# productores (cada uno en su terminal)
+make stream-encicla-producer / -job               # S-1, sliding 1m/30s
+make stream-producer / stream-alert-job           # S-2, tumbling 10m (Sprint 2)
+make stream-simm-producer  / stream-simm-job      # S-3, tumbling 5m
+make stream-metro-producer / stream-metro-job     # S-4, tumbling 5m
+make stream-hibrido                               # 4.3, batch↔streaming
+make dashboard                                    # http://localhost:8501
 ```
 
 A `.env` file is **required** before `make up`. Copy `.env.example` and edit. The `Makefile`'s `env-check` target enforces this.
@@ -113,8 +134,10 @@ EnCicla `id_usuario` must be HMAC-SHA256-pseudonymized **before** landing in Bro
 - `src/batch/{bronze,silver,gold}/` — PySpark pipelines for Sprint 1: Bronze ingest (6 sources), Silver transforms (one `transform_all.py`), Gold aggregates (`build_all.py` for B-1..B-4).
 - `src/shared/bronze_utils.py` — auditoría columns + `escribir_bronze` helper. Used by every Bronze script; don't reimplement.
 - `src/shared/config.py` — single source of truth. **Pyspark is imported lazily inside `crear_spark_session`** so `from shared.config import ...` works from non-Spark containers (e.g. `stream-runner`). Don't add top-level pyspark imports here.
-- `src/streaming/{producers,flink_jobs}/` — Sprint 2: SIATA producer + tumbling-window alert job (Python, NOT PyFlink — see ADR pending in `sprint-2-streaming.md`).
-- `scripts/` — operational scripts: `download_datasets.sh`, `overpass_a_geojson.py` (GeoMedellín OSM), `generar_muestras_sinteticas.py` (synthetic Metro/SIATA/EnCicla when portals fail), `init_iceberg_namespaces.py`, `consultar_alertas.py`.
+- `src/streaming/{producers,flink_jobs}/` — Sprint 2 + 3: SIATA, EnCicla, SIMM, Metro producers + tumbling/sliding window jobs (Python, NOT PyFlink — see ADR pending in `sprint-2-streaming.md`). Sprint 3 también añade `flink_jobs/job_hibrido.py` (batch↔streaming, sección 4.3).
+- `scripts/` — operational scripts: `download_datasets.sh`, `overpass_a_geojson.py` (GeoMedellín OSM), `generar_muestras_sinteticas.py` (synthetic fallback), `init_iceberg_namespaces.py`, `consultar_alertas.py`. **Sprint 1.5 reales:** `descargar_metro_afluencia_real.py`, `descargar_siata_real.py`, `descargar_encicla_estaciones.py`. **Sprint 3 referencias:** `exportar_referencias_streaming.py`.
+- `app/dashboard.py` — Streamlit (Sprint 3) con 5 paneles + mapa pydeck. Refresca cada 5 s.
+- `data/processed/` — JSONs derivados (gitignored): `percentiles_metro.json` (de afluencia real), `corredores_alta_siniestralidad.json` (de MEData real). Generados por `make exportar-referencias`.
 - `tests/smoke/` — Sprint 0 stack-health tests.
 - `data/raw/` — raw datasets (gitignored). MEData and SIMM are real; Metro/SIATA/EnCicla are synthetic-by-default with the same schema as the real sources, so swapping in real data later requires no code changes.
 - `notebooks/01_eda_gold.ipynb` — Sprint 1 EDA over the 4 Gold tables.

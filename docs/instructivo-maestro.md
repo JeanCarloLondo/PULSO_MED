@@ -227,3 +227,113 @@ ventana                 zona                          gravedad    pm25_avg  lect
 ## Cambio relevante a `src/shared/config.py`
 
 Se difirió el import de `pyspark.sql.SparkSession` al interior de `crear_spark_session()`. Razón: el contenedor `stream-runner` no tiene PySpark instalado, pero sí necesita las constantes de tópicos Kafka y de Mongo. Sin este cambio, cualquier `from shared.config import ...` desde el stream-runner fallaba con `ModuleNotFoundError: No module named 'pyspark'`. Es un patrón que se mantiene desde aquí en adelante: shared.config no debe importar nada que no esté disponible en TODOS los contenedores.
+
+---
+
+# Sprint 1.5 — Rescate de datos reales
+
+**Sprint corto.** Antes de Sprint 3, se sustituyeron 3 fuentes sintéticas por descargas reales públicas, sin tocar Bronze/Silver/Gold. Detalle en [`sprints/sprint-3-streaming-completo.md`](sprints/sprint-3-streaming-completo.md) (sección Sprint 1.5).
+
+## Lo que entregué
+
+| Script | Qué hace |
+|--------|----------|
+| `scripts/descargar_metro_afluencia_real.py` | Resuelve los item-IDs ArcGIS desde el DCAT feed (los IDs hardcoded estaban desactualizados), descarga xlsx con UA de navegador, convierte de wide (día×línea×hora) a CSV largo (240k filas reales). |
+| `scripts/descargar_siata_real.py` | Reemplaza la dependencia de `jq` por API Dataverse en Python; descarga PM2.5 + PM10 (1.7M filas) + metadata de las 44 estaciones reales con coordenadas. |
+| `scripts/descargar_encicla_estaciones.py` | OSM Overpass devuelve 80 nodos `bicycle_rental` con `network=EnCicla` o nombre que contiene "EnCicla" — nombres oficiales (Ruta N, MAMM, Plaza Botero) y coordenadas reales. |
+
+## Por qué cada decisión técnica
+
+**1. Por qué leer los productores directamente del CSV en vez de re-ingestar a Bronze.**
+El cambio de schema de las fuentes reales (Metro pasa de estación a línea, SIATA de wide a long) requiere refactor de Bronze/Silver/Gold. Para no bloquear Sprint 3, los productores leen el CSV/JSON real directo. El refactor de batch queda como tarea explícita de Sprint 4. Mientras tanto, Sprint 3 ya muestra **datos reales** en vivo.
+
+**2. EnCicla disponibilidad: simulación honesta sobre estaciones reales.**
+La app móvil de EnCicla usa un backend privado autenticado. No hay API pública. La decisión es transparente: las 80 estaciones (nombres + lat/lon + capacidad) son **reales**; el ratio de bicicletas/anclajes a lo largo del tiempo es simulado con un modelo Poisson + perfil horario. Documentado claramente como tal en el README del productor.
+
+**3. Meteorología SIATA sigue sintética.**
+Los datasets en Dataverse están dispersos en >100 DOIs por estación-variable. Sprint 1.5 es ya bastante. Se documenta la limitación; Sprint 4 hace el script consolidado si se requiere.
+
+---
+
+# Sprint 3 — Streaming completo + integración batch↔streaming
+
+**Sprint cerrado.** Las 4 preguntas operacionales (S-1..S-4) tienen productor, job de procesamiento y colección Mongo propios. El job híbrido materializa la sección 4.3 de la propuesta. Un dashboard Streamlit refresca cada 5 segundos. Detalle en [`sprints/sprint-3-streaming-completo.md`](sprints/sprint-3-streaming-completo.md).
+
+## Lo que entregué
+
+### Productores (todos en `src/streaming/producers/`)
+
+| Archivo | Lee de | Emite a | Real vs sintético |
+|---------|--------|---------|-------------------|
+| `siata_producer.py` (Sprint 2, sin cambios) | `data/raw/siata_historico/` | `siata.lecturas` | **PM2.5 real** desde Sprint 1.5; meteorología sintética |
+| `encicla_producer.py` | 80 estaciones OSM reales | `encicla.disponibilidad` | Estaciones reales; disponibilidad simulada (sin API pública) |
+| `simm_producer.py` | `simm_traffic_data.csv` (medata.gov.co) | `simm.aforos` | **100% real** (lecturas CCTV reales) |
+| `metro_producer.py` | `afluencia_metro_*.csv` (real, 240k filas) | `metro.validaciones` | **Afluencia real** distribuida en micro-eventos |
+
+### Jobs (todos en `src/streaming/flink_jobs/`)
+
+| Archivo | Pregunta | Ventana | Sink |
+|---------|----------|---------|------|
+| `siata_alert_job.py` (Sprint 2) | S-2 | tumbling 10 min | `alertas_aire` |
+| `encicla_disponibilidad_job.py` | S-1 | sliding 1 min / paso 30 s | `disponibilidad_encicla` |
+| `simm_aforo_job.py` | S-3 | tumbling 5 min | `aforos_corredor` |
+| `metro_afluencia_job.py` | S-4 | tumbling 5 min | `afluencia_metro_rt` |
+| `job_hibrido.py` | **sección 4.3** | rolling 5min + eval cada 10s | `alertas_hibridas` |
+
+### Bootstrap de referencias
+
+`scripts/exportar_referencias_streaming.py` calcula desde los CSV reales:
+- `data/processed/percentiles_metro.json` — p50/p75/p90/p95 de pasajeros por (línea × franja_horaria), sobre 240k observaciones reales
+- `data/processed/corredores_alta_siniestralidad.json` — top-8 comunas y 51 corredores derivados de 257k incidentes MEData reales
+
+### Dashboard
+
+`app/dashboard.py` — Streamlit con 5 paneles (KPIs, mapa EnCicla, alertas aire, afluencia Metro, corredores SIMM, alertas híbridas). Refresca cada 5 s consultando Mongo.
+
+## Decisiones técnicas (las grandes)
+
+**1. Mantenemos Python en `stream-runner`, no migramos a PyFlink.**
+Cuatro jobs corriendo en paralelo demuestran que el patrón Python escala para este proyecto. Cada job consume <50 MB y procesa cientos de eventos/segundo. Trade-off aceptado y documentado: at-least-once, ventanas en memoria, sin exactly-once. ADR formal en Sprint 4.
+
+**2. Job híbrido lee referencias precomputadas, no Iceberg en vivo.**
+Para el MVP del Sprint 3, leer un JSON pre-calculado de los CSV reales es equivalente al ejercicio sin la complejidad de PyIceberg + boto3 + REST endpoint en stream-runner. La migración a Iceberg-en-vivo queda como mejora del Sprint 4 (y se justificará explícitamente para demostrar el valor del REST Catalog).
+
+**3. Corredores de alta siniestralidad se derivan de MEData real.**
+El score OMS-like (5×muertos + 1×heridos + 0.1×daños) sobre 257k incidentes reales produce 8 comunas top y 51 corredores. La lista vive en JSON y el job SIMM la lee al arranque — el job NO tiene cableo a comunas específicas, lo cual permite recalcular cuando llegue MEData 2025.
+
+**4. Cada productor decide su propia cadencia.**
+- SIATA real es horario → el productor reproduce con `INTERVALO_S` configurable.
+- Metro afluencia es por hora-línea → el productor lo distribuye en `EVENTOS_POR_HORA` micro-eventos para granularidad fina.
+- SIMM es continuo (cámaras CCTV) → replay directo a 1 evento/seg.
+- EnCicla simulado → tick por estación cada `INTERVALO_S`.
+
+**5. Dashboard usa pydeck para mapa de EnCicla.**
+Permite visualizar las 80 estaciones reales con color rojo cuando bicis_min ≤ umbral. Sin dependencias geo pesadas; pydeck viene en pip estándar.
+
+## Cómo se ejecuta el demo Sprint 3 (verificado en código, pendiente de demo viva)
+
+```bash
+make datos-reales                  # ~5 min de descarga (idempotente)
+make pipeline-streaming-completo   # stack + referencias
+
+# 9 procesos en paralelo (ver Makefile target pipeline-streaming-completo)
+make stream-producer  &
+make stream-encicla-producer &
+make stream-simm-producer &
+make stream-metro-producer &
+make stream-alert-job &
+make stream-encicla-job &
+make stream-simm-job &
+make stream-metro-job &
+make stream-hibrido &
+
+make dashboard                     # http://localhost:8501
+```
+
+## Pendiente para Sprint 4
+
+- [ ] ADR formal Lambda vs Kappa (`docs/decisiones/02-lambda-vs-kappa.md`)
+- [ ] ADR formal Delta vs Iceberg (`docs/decisiones/05-delta-vs-iceberg.md`)
+- [ ] MapReduce legacy de incidentes (Módulo 01)
+- [ ] Refactor Bronze/Silver/Gold para incorporar los datos reales del Sprint 1.5
+- [ ] Migrar `job_hibrido.py` a consulta PyIceberg en vivo sobre Gold
