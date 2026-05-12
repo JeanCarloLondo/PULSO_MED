@@ -47,6 +47,14 @@ TBL_GOLD_CORREDORES_RIESGO = f"{CATALOG}.{NS_GOLD}.corredores_riesgo_compuesto"
 # por el job híbrido vía PyIceberg, reemplazando el JSON precomputado.
 TBL_GOLD_PERCENTILES_METRO = f"{CATALOG}.{NS_GOLD}.percentiles_metro"
 
+# ── Tablas Gold · Sprint 5 ───────────────────────────────────────────────────
+# Módulo 06a — MLlib: métricas de evaluación del modelo de fatalidad
+TBL_GOLD_ML_FATALIDAD_EVAL = f"{CATALOG}.{NS_GOLD}.ml_fatalidad_evaluacion"
+# Módulo 06b — GraphFrames: centralidad PageRank de estaciones Metro
+TBL_GOLD_RED_METRO_PAGERANK = f"{CATALOG}.{NS_GOLD}.red_metro_pagerank"
+# Módulo 06b — GraphFrames: rutas óptimas entre pares de estaciones Metro
+TBL_GOLD_RED_METRO_RUTAS    = f"{CATALOG}.{NS_GOLD}.red_metro_rutas_optimas"
+
 # ── Kafka Topics (Sprint 2+) ─────────────────────────────────────────────────
 KAFKA_BOOTSTRAP    = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 TOPIC_SIATA        = "siata.lecturas"

@@ -67,9 +67,26 @@ ESTACIONES_METRO = [
 ]
 
 def gen_metro_afluencia():
-    """3 años de afluencia diaria por estación, sensible a día de semana y lluvia."""
+    """3 años de afluencia horaria por línea (esquema real post-Sprint 4).
+
+    El Metro publica por línea, NO por estación. Columnas: fecha, linea, hora, pasajeros.
+    """
     out = RAW / "metro_afluencia"
     out.mkdir(parents=True, exist_ok=True)
+
+    # Perfil horario típico (hora → factor relativo al promedio diario)
+    PERFIL_HORA = {
+        4: 0.05, 5: 0.12, 6: 0.35, 7: 0.85, 8: 1.00, 9: 0.70,
+        10: 0.55, 11: 0.50, 12: 0.60, 13: 0.65, 14: 0.55, 15: 0.50,
+        16: 0.58, 17: 0.80, 18: 0.95, 19: 0.85, 20: 0.65, 21: 0.45,
+        22: 0.30, 23: 0.15,
+    }
+    LINEAS = {
+        "A": 35_000,   # pasajeros diarios base Línea A
+        "B": 14_000,   # pasajeros diarios base Línea B
+        "J": 4_500,    # cable J
+        "K": 5_000,    # cable K
+    }
 
     for anio in (2022, 2023, 2024):
         ruta = out / f"afluencia_metro_{anio}.csv"
@@ -78,21 +95,19 @@ def gen_metro_afluencia():
             continue
         with open(ruta, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["fecha", "estacion_id", "estacion_nombre", "linea", "validaciones"])
+            w.writerow(["fecha", "linea", "hora", "pasajeros"])
             d = datetime(anio, 1, 1)
             fin = datetime(anio, 12, 31)
             while d <= fin:
-                weekday = d.weekday()  # 0..6
-                factor_dia = 1.0 if weekday < 5 else 0.55
-                # estacionalidad mensual leve
+                factor_dia = 1.0 if d.weekday() < 5 else 0.55
                 factor_mes = 1.0 + 0.08 * math.sin(2 * math.pi * (d.month - 3) / 12)
-                for eid, nom, linea, *_ in ESTACIONES_METRO:
-                    base = {"A": 18000, "B": 9500}[linea]
-                    # ruido + perfil por estación (Niquía y Poblado más cargados)
-                    seed_est = (hash(eid) % 1000) / 1000
-                    perfil = 0.7 + 1.2 * seed_est
-                    val = int(base * factor_dia * factor_mes * perfil * random.uniform(0.85, 1.15))
-                    w.writerow([d.strftime("%Y-%m-%d"), eid, nom, linea, val])
+                for linea, base_diario in LINEAS.items():
+                    for hora, factor_hora in PERFIL_HORA.items():
+                        pax = int(
+                            base_diario * factor_dia * factor_mes
+                            * factor_hora * random.uniform(0.88, 1.12)
+                        )
+                        w.writerow([d.strftime("%Y-%m-%d"), linea, hora, max(0, pax)])
                 d += timedelta(days=1)
         print(f"  ✓ {ruta} ({ruta.stat().st_size//1024} KB)")
 
@@ -208,51 +223,71 @@ ESTACIONES_SIATA = [
 ]
 
 def gen_siata():
+    """Genera archivos SIATA en el formato que espera ingest_siata.py (post Sprint 4).
+
+    Produce:
+      - siata_pm25_horario.csv   — long: timestamp, estacion_id, variable, valor
+      - siata_pm10_horario.csv   — idem para PM10
+      - siata_estaciones.tab     — TSV: codigo, nombre_completo, nombre_corto, lat, lon, municipio
+    """
     out = RAW / "siata_historico"
     out.mkdir(parents=True, exist_ok=True)
-    ruta = out / "siata_pm25_horario_2023.csv"
-    if ruta.exists() and ruta.stat().st_size > 0:
-        print(f"  ⚠ Existe: {ruta.name}")
-        return
-    with open(ruta, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "estacion_id", "estacion_nombre", "zona", "latitud", "longitud",
-            "timestamp", "pm25", "pm10", "temperatura_c", "humedad_pct",
-            "precipitacion_mm", "viento_kmh",
-        ])
-        d0 = datetime(2023, 1, 1)
-        # 1 año, lectura horaria
-        for h in range(365 * 24):
-            ts = d0 + timedelta(hours=h)
-            # patrón estacional: peor calidad de aire en febrero-marzo (nivel 1 de PM2.5)
-            mes_factor = 1.4 if ts.month in (2, 3) else 1.0 if ts.month in (10, 11) else 0.8
-            # peor en horas pico
-            hora_factor = 1.5 if ts.hour in (7, 8, 18, 19) else 0.9
-            # lluvia: tarde en mayo-noviembre
-            llueve = random.random() < (0.18 if 5 <= ts.month <= 11 and 13 <= ts.hour <= 20 else 0.04)
+
+    # Eliminar archivo con nombre incorrecto si existe
+    viejo = out / "siata_pm25_horario_2023.csv"
+    if viejo.exists():
+        viejo.unlink()
+
+    # TAB de estaciones (nombre_corto = estacion_id en los CSV)
+    ruta_tab = out / "siata_estaciones.tab"
+    if not ruta_tab.exists() or ruta_tab.stat().st_size == 0:
+        with open(ruta_tab, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f, delimiter="\t")
+            w.writerow(["codigo", "nombre_completo", "nombre_corto", "latitud", "longitud", "municipio"])
+            municipios = {
+                "ESP_AEROPUERTO": ("Aeropuerto Olaya Herrera", "Medellín"),
+                "ESP_POBLADO":    ("El Poblado",               "Medellín"),
+                "ESP_BELEN":      ("Belén",                    "Medellín"),
+                "ESP_CENTRO":     ("Centro de Medellín",       "Medellín"),
+                "ESP_LAURELES":   ("Laureles",                 "Medellín"),
+                "ESP_BELLO":      ("Bello Centro",             "Bello"),
+                "ESP_ITAGUI":     ("Itagüí Centro",            "Itagüí"),
+                "ESP_CALDAS":     ("Caldas",                   "Caldas"),
+                "ESP_MANRIQUE":   ("Manrique",                 "Medellín"),
+                "ESP_ARANJUEZ":   ("Aranjuez",                 "Medellín"),
+            }
             for eid, nom, zona, lat, lon in ESTACIONES_SIATA:
-                base_pm25 = 22 * mes_factor * hora_factor
-                # algunas estaciones más contaminadas
-                if eid in ("ESP_CENTRO", "ESP_AEROPUERTO"):
-                    base_pm25 *= 1.25
-                pm25 = max(5.0, random.gauss(base_pm25, 9))
-                pm10 = pm25 * random.uniform(1.5, 2.2)
-                temp = random.gauss(22, 3) - (3 if llueve else 0)
-                hum = min(98, max(35, random.gauss(72 if llueve else 60, 8)))
-                precip = round(max(0, random.gauss(2.5, 1.8)), 1) if llueve else 0.0
-                viento = max(0, random.gauss(6, 3))
-                # SIATA usa -999 como nulo: simulamos un 0.5% de valores faltantes
-                if random.random() < 0.005:
-                    pm25 = -999.0
-                w.writerow([
-                    eid, nom, zona, lat, lon,
-                    ts.isoformat(timespec="seconds"),
-                    round(pm25, 2), round(pm10, 2),
-                    round(temp, 1), round(hum, 1),
-                    precip, round(viento, 2),
-                ])
-    print(f"  ✓ {ruta}  ({ruta.stat().st_size//1024} KB)")
+                nombre_largo, mpio = municipios.get(eid, (nom, "Medellín"))
+                # codigo puede ser igual al nombre_corto para sintético
+                w.writerow([eid, nombre_largo, eid, lat, lon, mpio])
+        print(f"  ✓ {ruta_tab.name}")
+
+    d0 = datetime(2023, 1, 1)
+    horas_totales = 365 * 24
+
+    # Generar PM2.5 y PM10 en formato long
+    for variable, escala in [("pm25", 1.0), ("pm10", 1.7)]:
+        ruta = out / f"siata_{variable}_horario.csv"
+        if ruta.exists() and ruta.stat().st_size > 0:
+            print(f"  ⚠ Existe: {ruta.name}")
+            continue
+        with open(ruta, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "estacion_id", "variable", "valor"])
+            for h in range(horas_totales):
+                ts = d0 + timedelta(hours=h)
+                mes_factor = 1.4 if ts.month in (2, 3) else 1.0 if ts.month in (10, 11) else 0.8
+                hora_factor = 1.5 if ts.hour in (7, 8, 18, 19) else 0.9
+                for eid, *_ in ESTACIONES_SIATA:
+                    base = 22 * mes_factor * hora_factor * escala
+                    if eid in ("ESP_CENTRO", "ESP_AEROPUERTO"):
+                        base *= 1.25
+                    valor = max(5.0, random.gauss(base, 9 * escala))
+                    # SIATA usa -999 como centinela de nulo
+                    if random.random() < 0.005:
+                        valor = -999.0
+                    w.writerow([ts.isoformat(timespec="seconds"), eid, variable, round(valor, 2)])
+        print(f"  ✓ {ruta.name}  ({ruta.stat().st_size//1024} KB)")
 
 
 def main():

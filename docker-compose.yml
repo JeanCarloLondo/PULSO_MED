@@ -216,18 +216,23 @@ services:
       - pulsomed-net
 
   # ======================================================================
-  # [SPRINT 5]  Trino (bonus, +2 pt) — descomentar en el Sprint 5
+  # [SPRINT 5]  Trino — tercer motor SQL sobre las tablas Gold (bonus +2 pt)
   # ======================================================================
 
-  # trino:
-  #   image: trinodb/trino:latest
-  #   container_name: pulsomed-trino
-  #   depends_on:
-  #     iceberg-rest:
-  #       condition: service_started
-  #   ports:
-  #     - "8084:8080"
-  #   volumes:
-  #     - ./docker/trino/etc:/etc/trino
-  #   networks:
-  #     - pulsomed-net
+  trino:
+    image: trinodb/trino:latest
+    container_name: pulsomed-trino
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    ports:
+      - "${TRINO_PORT:-8084}:8080"
+    volumes:
+      - ./docker/trino/etc:/etc/trino
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    networks:
+      - pulsomed-net

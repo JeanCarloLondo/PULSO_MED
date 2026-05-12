@@ -19,6 +19,8 @@ SHELL := /bin/bash
 COMPOSE := docker compose
 COMPOSE_EXEC    := MSYS_NO_PATHCONV=1 $(COMPOSE) exec
 SERVICE ?=
+# Python en el host (puede ser python3 en Linux sin alias)
+PYTHON_HOST := $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python3)
 
 ENV_CHECK := @if [ ! -f .env ]; then \
 	echo "ERROR: archivo .env no encontrado. Copia .env.example: cp .env.example .env"; \
@@ -27,7 +29,9 @@ fi
 
 .PHONY: help up down clean ps logs smoke shell pyspark jupyter \
         smoke-minio smoke-iceberg smoke-mongo \
-        env-check rebuild wait-stack
+        env-check rebuild wait-stack \
+        ml-fatalidad grafo-metro trino-up trino-sql trino-demo \
+        pipeline-sprint5 all
 
 help: ## Mostrar este mensaje de ayuda
 	@echo "Pulso Medellín — comandos disponibles:"
@@ -166,7 +170,7 @@ pipeline-batch: init-namespaces ingest-bronze-all transform-silver build-gold ##
 # ---------- Sprint 1 — Datos sintéticos (cuando descarga real falla) -----
 
 generate-samples: ## [Sprint 1] Generar muestras sintéticas para Metro/SIATA/EnCicla
-	@PYTHONIOENCODING=utf-8 python scripts/generar_muestras_sinteticas.py
+	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) scripts/generar_muestras_sinteticas.py
 
 # ---------- Sprint 2 — Streaming MVP --------------------------
 
@@ -198,18 +202,18 @@ pipeline-streaming: stream-up ## [Sprint 2] Stack streaming completo arriba
 
 datos-reales: ## [Sprint 1.5] Descargar datos reales: Metro xlsx + SIATA Dataverse + EnCicla OSM
 	@echo "→ Metro afluencia (xlsx oficial Metro de Medellín)..."
-	@PYTHONIOENCODING=utf-8 python scripts/descargar_metro_afluencia_real.py
+	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) scripts/descargar_metro_afluencia_real.py
 	@echo ""
 	@echo "→ SIATA PM2.5 + PM10 (Dataverse oficial)..."
-	@PYTHONIOENCODING=utf-8 python scripts/descargar_siata_real.py
+	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) scripts/descargar_siata_real.py
 	@echo ""
 	@echo "→ EnCicla estaciones (OpenStreetMap Overpass)..."
-	@PYTHONIOENCODING=utf-8 python scripts/descargar_encicla_estaciones.py
+	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) scripts/descargar_encicla_estaciones.py
 	@echo ""
 	@echo "✅ Datos reales en data/raw/. Próximo paso: make exportar-referencias"
 
 exportar-referencias: ## [Sprint 3] Pre-computar percentiles Metro + corredores riesgo desde CSV reales
-	@PYTHONIOENCODING=utf-8 python scripts/exportar_referencias_streaming.py
+	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) scripts/exportar_referencias_streaming.py
 
 # ---------- Sprint 3 — Streaming completo ---------------------
 
@@ -243,7 +247,7 @@ stream-hibrido: env-check ## [Sprint 3] Job híbrido batch↔streaming (sección
 		stream-runner python -u /workspace/src/streaming/flink_jobs/job_hibrido.py
 
 dashboard: ## [Sprint 3] Levantar dashboard Streamlit (host)
-	@which streamlit > /dev/null || pip install streamlit pymongo pandas pydeck
+	@which streamlit > /dev/null || pip3 install streamlit pymongo pandas pydeck
 	@MONGO_HOST=localhost streamlit run app/dashboard.py
 
 pipeline-streaming-completo: stream-up exportar-referencias ## [Sprint 3] Stack streaming + referencias listas
@@ -268,12 +272,12 @@ benchmark-formatos: env-check ## [Sprint 4] Benchmark CSV vs Parquet vs Parquet+
 	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/scripts/benchmark_formatos.py
 
 legacy-generar: ## [Sprint 4] Generar CSV legacy pre/post-2017 (módulo 01)
-	@PYTHONIOENCODING=utf-8 python src/legacy/generar_dataset_legacy.py
+	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) src/legacy/generar_dataset_legacy.py
 
 legacy-mapreduce: ## [Sprint 4] Correr el job mrjob (host, modo inline)
-	@which mrjob >/dev/null 2>&1 || pip install --quiet mrjob
+	@which mrjob >/dev/null 2>&1 || pip3 install --quiet mrjob
 	@rm -rf data/processed/incidentes_normalizados
-	@PYTHONIOENCODING=utf-8 python src/legacy/mapreduce_incidentes.py \
+	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) src/legacy/mapreduce_incidentes.py \
 		data/raw/medata_legacy/incidentes_pre2017.csv \
 		data/raw/medata_legacy/incidentes_post2017.csv \
 		--output-dir data/processed/incidentes_normalizados
@@ -285,3 +289,53 @@ pipeline-legacy: legacy-generar legacy-mapreduce legacy-ingest ## [Sprint 4] MR 
 	@echo ""
 	@echo "✅ Pipeline MapReduce completo. Tabla:"
 	@echo "    demo.pulsomed.bronze.medata_incidentes_legacy_mr"
+
+# ---------- Sprint 5 — ML, Grafo, Trino, EDA cruzado ----------
+
+ml-fatalidad: env-check ## [Sprint 5] Módulo 06a · MLlib: entrenar modelo de gravedad (multiclase)
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/ml/train_fatalidad.py
+
+grafo-metro: env-check ## [Sprint 5] Módulo 06b · PageRank + rutas óptimas red Metro
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/graph/red_metro.py
+
+trino-up: env-check ## [Sprint 5] Levantar Trino (tercer motor SQL sobre Gold)
+	$(COMPOSE) up -d trino
+	@echo ""
+	@echo "Trino UI: http://localhost:$${TRINO_PORT:-8084}/ui"
+	@echo "Conectar con:  make trino-sql"
+
+trino-sql: env-check ## [Sprint 5] Abrir CLI de Trino (consulta interactiva)
+	$(COMPOSE) exec trino trino
+
+trino-demo: env-check ## [Sprint 5] Ejecutar consultas de demo sobre Gold vía Trino
+	@$(COMPOSE) exec -T trino trino --execute \
+		"SELECT nombre, linea, pagerank, ranking FROM demo.pulsomed.gold.red_metro_pagerank ORDER BY ranking LIMIT 10;"
+	@echo ""
+	@$(COMPOSE) exec -T trino trino --execute \
+		"SELECT anio, comuna, incidentes_total, indice_severidad FROM demo.pulsomed.gold.accidentalidad_por_comuna ORDER BY indice_severidad DESC LIMIT 10;"
+
+pipeline-sprint5: ml-fatalidad grafo-metro ## [Sprint 5] Pipeline ML + Grafo end-to-end
+	@echo ""
+	@echo "✅ Sprint 5 pipeline completado."
+	@echo "   Tablas Gold creadas:"
+	@echo "     demo.pulsomed.gold.ml_fatalidad_evaluacion"
+	@echo "     demo.pulsomed.gold.red_metro_pagerank"
+	@echo "     demo.pulsomed.gold.red_metro_rutas_optimas"
+	@echo ""
+	@echo "Para Trino (bonus):  make trino-up && make trino-demo"
+	@echo "Para notebooks:      make jupyter"
+
+# ---------- make all — pipeline completo Sprint 0..5 ----------
+
+all: env-check up init-namespaces pipeline-batch pipeline-legacy pipeline-sprint5 ## Orquesta el pipeline completo Sprint 0→5 end-to-end
+	@echo ""
+	@echo "╔══════════════════════════════════════════════════════╗"
+	@echo "║      Pulso Medellín — pipeline completo listo        ║"
+	@echo "║                                                      ║"
+	@echo "║  Batch Gold:      make build-gold                    ║"
+	@echo "║  Streaming demo:  make pipeline-streaming-completo   ║"
+	@echo "║  ML + Grafo:      make pipeline-sprint5              ║"
+	@echo "║  Trino SQL:       make trino-up && make trino-sql    ║"
+	@echo "║  Dashboard:       make dashboard                     ║"
+	@echo "║  Jupyter:         make jupyter                       ║"
+	@echo "╚══════════════════════════════════════════════════════╝"
