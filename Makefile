@@ -308,11 +308,13 @@ trino-sql: env-check ## [Sprint 5] Abrir CLI de Trino (consulta interactiva)
 	$(COMPOSE) exec trino trino
 
 trino-demo: env-check ## [Sprint 5] Ejecutar consultas de demo sobre Gold vía Trino
+	@echo "→ Estaciones Metro más centrales (PageRank):"
 	@$(COMPOSE) exec -T trino trino --execute \
-		"SELECT nombre, linea, pagerank, ranking FROM demo.pulsomed.gold.red_metro_pagerank ORDER BY ranking LIMIT 10;"
+		"SELECT nombre, linea, pagerank, ranking FROM iceberg.\"pulsomed.gold\".red_metro_pagerank ORDER BY ranking LIMIT 10;"
 	@echo ""
+	@echo "→ Comunas con más siniestralidad:"
 	@$(COMPOSE) exec -T trino trino --execute \
-		"SELECT anio, comuna, incidentes_total, indice_severidad FROM demo.pulsomed.gold.accidentalidad_por_comuna ORDER BY indice_severidad DESC LIMIT 10;"
+		"SELECT anio, comuna, incidentes_total, indice_severidad FROM iceberg.\"pulsomed.gold\".accidentalidad_por_comuna ORDER BY indice_severidad DESC LIMIT 10;"
 
 pipeline-sprint5: ml-fatalidad grafo-metro ## [Sprint 5] Pipeline ML + Grafo end-to-end
 	@echo ""
