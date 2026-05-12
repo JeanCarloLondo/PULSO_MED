@@ -7,9 +7,9 @@ Para el plan global (qué sprint cubre qué), ver [`../00-roadmap.md`](../00-roa
 
 | Sprint | Archivo | Estado |
 |--------|---------|--------|
-| 0 | [`sprint-0-setup.md`](sprint-0-setup.md) | ✅ creado |
-| 1 | `sprint-1-batch.md` | ⏳ por crear al inicio del Sprint 1 |
-| 2 | `sprint-2-streaming-mvp.md` | ⏳ |
-| 3 | `sprint-3-streaming-completo.md` | ⏳ |
-| 4 | `sprint-4-legado-y-decisiones.md` | ⏳ |
-| 5 | `sprint-5-ml-cloud-bonus.md` | ⏳ |
+| 0 | [`sprint-0-setup.md`](sprint-0-setup.md) | ✅ cerrado |
+| 1 | [`sprint-1-batch.md`](sprint-1-batch.md) | ✅ cerrado |
+| 2 | [`sprint-2-streaming.md`](sprint-2-streaming.md) | ✅ cerrado |
+| 3 | [`sprint-3-streaming-completo.md`](sprint-3-streaming-completo.md) | ✅ cerrado (incluye Sprint 1.5 rescate datos reales) |
+| 4 | [`sprint-4-legacy-y-adrs.md`](sprint-4-legacy-y-adrs.md) | ✅ cerrado (ADRs 02/04/05 + MapReduce + refactor batch + PyIceberg vivo) |
+| 5 | `sprint-5-ml-cloud-bonus.md` | ⏳ por crear (MLlib, GraphFrames, ADR 07, Trino, EDA cruzado) |

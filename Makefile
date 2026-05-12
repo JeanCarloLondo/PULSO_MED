@@ -261,3 +261,27 @@ pipeline-streaming-completo: stream-up exportar-referencias ## [Sprint 3] Stack 
 	@echo "  Terminal 8:  make stream-metro-job"
 	@echo "  Terminal 9:  make stream-hibrido             # 4.3 batch↔stream"
 	@echo "  Terminal 10: make dashboard                  # Streamlit"
+
+# ---------- Sprint 4 — ADRs + Benchmark + MapReduce legacy ---------
+
+benchmark-formatos: env-check ## [Sprint 4] Benchmark CSV vs Parquet vs Parquet+ZSTD (ADR 04)
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/scripts/benchmark_formatos.py
+
+legacy-generar: ## [Sprint 4] Generar CSV legacy pre/post-2017 (módulo 01)
+	@PYTHONIOENCODING=utf-8 python src/legacy/generar_dataset_legacy.py
+
+legacy-mapreduce: ## [Sprint 4] Correr el job mrjob (host, modo inline)
+	@which mrjob >/dev/null 2>&1 || pip install --quiet mrjob
+	@rm -rf data/processed/incidentes_normalizados
+	@PYTHONIOENCODING=utf-8 python src/legacy/mapreduce_incidentes.py \
+		data/raw/medata_legacy/incidentes_pre2017.csv \
+		data/raw/medata_legacy/incidentes_post2017.csv \
+		--output-dir data/processed/incidentes_normalizados
+
+legacy-ingest: env-check ## [Sprint 4] Ingestar salida del MR → Bronze Iceberg
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/src/batch/bronze/ingest_legacy_mr.py
+
+pipeline-legacy: legacy-generar legacy-mapreduce legacy-ingest ## [Sprint 4] MR end-to-end
+	@echo ""
+	@echo "✅ Pipeline MapReduce completo. Tabla:"
+	@echo "    demo.pulsomed.bronze.medata_incidentes_legacy_mr"

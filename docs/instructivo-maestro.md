@@ -332,8 +332,102 @@ make dashboard                     # http://localhost:8501
 
 ## Pendiente para Sprint 4
 
-- [ ] ADR formal Lambda vs Kappa (`docs/decisiones/02-lambda-vs-kappa.md`)
-- [ ] ADR formal Delta vs Iceberg (`docs/decisiones/05-delta-vs-iceberg.md`)
-- [ ] MapReduce legacy de incidentes (Módulo 01)
-- [ ] Refactor Bronze/Silver/Gold para incorporar los datos reales del Sprint 1.5
-- [ ] Migrar `job_hibrido.py` a consulta PyIceberg en vivo sobre Gold
+- [x] ADR formal Lambda vs Kappa (`docs/decisiones/02-lambda-vs-kappa.md`)
+- [x] ADR formal Delta vs Iceberg (`docs/decisiones/05-delta-vs-iceberg.md`)
+- [x] MapReduce legacy de incidentes (Módulo 01)
+- [x] Refactor Bronze/Silver/Gold para incorporar los datos reales del Sprint 1.5
+- [x] Migrar `job_hibrido.py` a consulta PyIceberg en vivo sobre Gold
+
+(Detalle abajo.)
+
+---
+
+# Sprint 4 — Legacy MapReduce, ADRs firmados y refactor con datos reales
+
+**Sprint cerrado en código y documentación.** Verificación end-to-end queda
+sujeta a correr `make pipeline-batch` + `make pipeline-legacy` con el stack
+Docker arriba. Detalle en
+[`sprints/sprint-4-legacy-y-adrs.md`](sprints/sprint-4-legacy-y-adrs.md).
+
+## Lo que entregué
+
+### Documentos de decisión (ADRs firmados)
+
+| Archivo | Cubre módulo | Decisión |
+|---------|---------------|----------|
+| `docs/decisiones/02-lambda-vs-kappa.md` | 02 | Lambda. Batch sobre Iceberg + streaming sobre Kafka/Python. El job híbrido materializa el patrón. |
+| `docs/decisiones/04-benchmark-formatos.md` | 04 | Parquet + ZSTD. CSV es 4-6× más grande, lectura 6-10× más lenta; ZSTD gana 30% sobre Snappy sin costo de lectura. Reproducible con `make benchmark-formatos`. |
+| `docs/decisiones/05-delta-vs-iceberg.md` | 05 | Iceberg con catálogo REST. Iceberg gana en Snowflake, Athena y Colab; empata con Delta en Databricks (UniForm). |
+
+### MapReduce legacy (Módulo 01)
+
+| Archivo | Para qué |
+|---------|----------|
+| `src/legacy/generar_dataset_legacy.py` | Reconstruye la heterogeneidad histórica de MEData (pre/post-2017) partiendo del CSV unificado actual: dos archivos sin encabezado con esquemas distintos. |
+| `src/legacy/mapreduce_incidentes.py` | Job `mrjob` con mapper que detecta el esquema por contenido (fecha + n° de columnas) y reducer que dedupe por `nro_radicado` prefiriendo el más nuevo. Counters de calidad expuestos. |
+| `src/batch/bronze/ingest_legacy_mr.py` | Lee el TSV canónico y lo escribe a `demo.pulsomed.bronze.medata_incidentes_legacy_mr`. Cierra el ciclo MR → Bronze Iceberg. |
+| `src/legacy/README.md` | Cómo correrlo, qué counters esperar, trade-off mrjob vs Hadoop Java puro. |
+
+### Refactor batch con datos reales del Sprint 1.5
+
+| Archivo | Cambio |
+|---------|--------|
+| `bronze/ingest_metro.py` | Schema pasa de `(fecha, estacion_id, estacion_nombre, linea, validaciones)` a `(fecha, linea, hora, pasajeros)`. La fuente pública NO desglosa por estación. |
+| `bronze/ingest_siata.py` | Lee los CSV largos PM2.5/PM10 reales, pivota long→wide, anexa metadatos de estación. Cols meteorológicas como NULL hasta Sprint 5. |
+| `silver/transform_all.py` | `_silver_afluencia` ahora trabaja con granularidad hora×línea y deriva `franja_horaria`. `_silver_aire` tolera columnas opcionales del Bronze real. |
+| `gold/build_all.py` | B-1 recalculada por `(linea × mes)`. Nuevo `b5_percentiles_metro` produce `gold.percentiles_metro` insumo del job híbrido. |
+| `shared/config.py` | Nueva constante `TBL_GOLD_PERCENTILES_METRO`. |
+
+### Migración del job híbrido a Iceberg en vivo
+
+`src/streaming/flink_jobs/job_hibrido.py` ahora carga los percentiles desde
+`demo.pulsomed.gold.percentiles_metro` vía **PyIceberg** contra el REST Catalog.
+Si la tabla no existe o el catálogo no responde, cae al JSON precomputado del
+Sprint 3 — la migración no rompe el camino anterior. El log indica
+explícitamente qué fuente se usó.
+
+`docker-compose.yml::stream-runner` ahora instala `pyiceberg[s3fs,pyarrow]`
+en boot y expone `AWS_*` + `ICEBERG_REST_URI` + `ICEBERG_S3_ENDPOINT`.
+
+### Comandos Makefile añadidos
+
+```bash
+make benchmark-formatos    # ADR 04, reproducible
+make legacy-generar        # paso 1 MR
+make legacy-mapreduce      # paso 2 MR (instala mrjob si falta)
+make legacy-ingest         # paso 3 MR
+make pipeline-legacy       # 1+2+3 encadenados
+```
+
+## Decisiones técnicas (las grandes)
+
+**1. mrjob en lugar de Hadoop Java puro.** Trade-off documentado en
+`src/legacy/README.md`. mrjob cubre el paradigma (mapper + reducer + counters)
+sin sumar 4 contenedores Hadoop al compose. Si el evaluador exige Hadoop
+"puro", el código mrjob es directamente convertible a Mapper/Reducer Java.
+
+**2. Iceberg en vivo con fallback robusto.** No queremos que la migración
+rompa el camino del Sprint 3. Si el batch no se ha corrido o el catálogo
+está caído, el JSON sigue siendo el respaldo. La variable
+`FORZAR_FUENTE_JSON=1` permite tests offline.
+
+**3. Columnas meteorológicas en NULL en lugar de inventarlas.** La fuente
+SIATA real (Dataverse) sólo trae PM2.5/PM10 fácilmente accesibles. El resto
+(precipitación, temperatura, humedad, viento) vive en >100 DOIs por estación
+y queda como tarea Sprint 5. Silver no se cae: tolera NULL y `_silver_afluencia`
+hace `LEFT JOIN` — pierde correlaciones con precipitación pero no la
+consulta.
+
+**4. Granularidad Metro pasa a horaria en Silver.** La fuente real es
+hora×línea — conservamos esa resolución en `silver.afluencia_horaria`.
+B-1 mensual sigue funcionando porque agrega desde ahí, y el job híbrido
+puede leer percentiles por franja horaria sin más procesamiento.
+
+## Lo que NO se hizo en este Sprint
+
+- MLlib (Módulo 06a) — predicción de fatalidad sobre Gold accidentalidad.
+- GraphFrames (Módulo 06b) — rutas mínimas Metro.
+- ADR 07 Cloud (AWS vs GCP) + controles de acceso por capa + marco Ley 1581/1712.
+- Bonuses Sprint 5: Trino, `make all` end-to-end, notebook EDA cruzado.
+- Consolidación de meteorología SIATA real.
+- EnCicla préstamos reales (bloqueo institucional — requiere PQRS al AMVA).

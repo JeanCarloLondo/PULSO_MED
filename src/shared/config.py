@@ -43,6 +43,9 @@ TBL_GOLD_AFLUENCIA_PM25    = f"{CATALOG}.{NS_GOLD}.afluencia_vs_pm25"
 TBL_GOLD_ACCIDENTALIDAD    = f"{CATALOG}.{NS_GOLD}.accidentalidad_por_comuna"
 TBL_GOLD_ENCICLA_CLIMA     = f"{CATALOG}.{NS_GOLD}.demanda_encicla_vs_clima"
 TBL_GOLD_CORREDORES_RIESGO = f"{CATALOG}.{NS_GOLD}.corredores_riesgo_compuesto"
+# Gold derivada (Sprint 4): percentiles de afluencia Metro consumida en vivo
+# por el job híbrido vía PyIceberg, reemplazando el JSON precomputado.
+TBL_GOLD_PERCENTILES_METRO = f"{CATALOG}.{NS_GOLD}.percentiles_metro"
 
 # ── Kafka Topics (Sprint 2+) ─────────────────────────────────────────────────
 KAFKA_BOOTSTRAP    = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")

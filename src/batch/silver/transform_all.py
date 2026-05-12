@@ -186,30 +186,37 @@ def _silver_incidentes(spark: SparkSession, asignar_comuna) -> int:
 
 
 def _silver_aire(spark: SparkSession) -> int:
-    log_seccion("Silver · lecturas_aire_validas (SIATA)")
+    log_seccion("Silver · lecturas_aire_validas (SIATA real)")
 
     bronze = spark.table(TBL_BRONZE_SIATA)
     sentinel = SIATA_NULL_SENTINEL
 
     df = bronze
+    cols_disponibles = set(df.columns)
     for col in ("pm25", "pm10", "temperatura_c", "humedad_pct", "precipitacion_mm", "viento_kmh"):
-        df = df.withColumn(
-            col,
-            F.when(F.col(col) == F.lit(sentinel), None).otherwise(F.col(col)),
-        )
+        if col in cols_disponibles:
+            df = df.withColumn(
+                col,
+                F.when(F.col(col) == F.lit(sentinel), None).otherwise(F.col(col)),
+            )
 
     # Filtrar lecturas sin PM2.5 (la métrica primaria)
     df = df.filter(F.col("pm25").isNotNull() & (F.col("pm25") > 0))
 
-    df = df.withColumn("anio", F.year("timestamp"))
-    df = df.withColumn("hora", F.hour("timestamp"))
-    df = df.withColumn(
-        "fecha_hora",
-        F.date_trunc("hour", F.col("timestamp")),
+    df = (
+        df.withColumn("anio", F.year("timestamp"))
+          .withColumn("hora", F.hour("timestamp"))
+          .withColumn("fecha_hora", F.date_trunc("hour", F.col("timestamp")))
     )
 
+    # `municipio` aparece en Bronze sólo si SIATA real estaba presente;
+    # si venimos de sintético, lo creamos en NULL para no romper Silver.
+    if "municipio" not in cols_disponibles:
+        df = df.withColumn("municipio", F.lit(None).cast("string"))
+
     out = df.select(
-        "estacion_id", "estacion_nombre", "zona", "latitud", "longitud",
+        "estacion_id", "estacion_nombre", "zona", "municipio",
+        "latitud", "longitud",
         "timestamp", "fecha_hora", "anio", "hora",
         "pm25", "pm10", "temperatura_c", "humedad_pct",
         "precipitacion_mm", "viento_kmh",
@@ -217,24 +224,27 @@ def _silver_aire(spark: SparkSession) -> int:
 
     n = out.count()
     out.writeTo(TBL_SILVER_AIRE).using("iceberg").partitionedBy(F.col("anio")).createOrReplace()
-    log_ok(f"{TBL_SILVER_AIRE}: {n:,} filas válidas")
+    log_ok(f"{TBL_SILVER_AIRE}: {n:,} filas válidas (PM2.5 no nulo)")
     return n
 
 
 def _silver_afluencia(spark: SparkSession) -> int:
-    log_seccion("Silver · afluencia_horaria (Metro + agregado SIATA diario)")
+    log_seccion("Silver · afluencia_horaria (Metro hora×línea + agregado SIATA diario)")
 
+    # Esquema real Sprint 1.5: fecha, linea, hora, pasajeros (sin estación)
     metro = spark.table(TBL_BRONZE_METRO).select(
-        "fecha", "estacion_id", "estacion_nombre", "linea", "validaciones",
+        "fecha", "linea", "hora", "pasajeros",
     )
 
-    # Agregar lluvia y PM2.5 diario por zona promedio (toda la red)
+    # Agregar PM2.5 diario por red (la fuente real SIATA sólo trae PM2.5/PM10;
+    # precip y temperatura quedarán NULL hasta que se incorpore meteo en Sprint 5).
     aire_dia = (
         spark.table(TBL_SILVER_AIRE)
         .withColumn("fecha", F.to_date("timestamp"))
         .groupBy("fecha")
         .agg(
             F.avg("pm25").alias("pm25_promedio_red"),
+            F.avg("pm10").alias("pm10_promedio_red"),
             F.sum("precipitacion_mm").alias("precipitacion_total_mm"),
             F.avg("temperatura_c").alias("temperatura_promedio_c"),
         )
@@ -245,11 +255,20 @@ def _silver_afluencia(spark: SparkSession) -> int:
         .withColumn("anio", F.year("fecha"))
         .withColumn("dia_semana", F.dayofweek("fecha"))
         .withColumn("es_finde", (F.col("dia_semana").isin(1, 7)).cast("int"))
+        .withColumn(
+            "franja_horaria",
+            F.when(F.col("hora").between(5, 8), F.lit("punta_am"))
+             .when(F.col("hora").between(9, 11), F.lit("valle_am"))
+             .when(F.col("hora").between(12, 13), F.lit("almuerzo"))
+             .when(F.col("hora").between(14, 16), F.lit("valle_pm"))
+             .when(F.col("hora").between(17, 20), F.lit("punta_pm"))
+             .otherwise(F.lit("nocturno")),
+        )
     )
 
     n = out.count()
     out.writeTo(TBL_SILVER_AFLUENCIA).using("iceberg").partitionedBy(F.col("anio")).createOrReplace()
-    log_ok(f"{TBL_SILVER_AFLUENCIA}: {n:,} filas (Metro × clima diario)")
+    log_ok(f"{TBL_SILVER_AFLUENCIA}: {n:,} filas (Metro hora×línea × clima diario)")
     return n
 
 

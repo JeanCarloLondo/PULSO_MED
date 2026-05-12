@@ -41,10 +41,10 @@ Qué decidimos. Una frase, máximo dos.
 
 | # | Título | Sprint | Estado |
 |---|--------|--------|--------|
-| 02 | Lambda vs Kappa | Sprint 4 | ⏳ por escribir |
-| 04 | Benchmark de formatos (CSV/Parquet/ZSTD) | Sprint 1 | ⏳ |
-| 05 | Delta Lake vs Apache Iceberg | Sprint 4 | ⏳ |
-| 07 | AWS vs GCP como proveedor cloud | Sprint 5 | ⏳ |
+| 02 | Lambda vs Kappa | Sprint 4 | ✅ Aceptado |
+| 04 | Benchmark de formatos (CSV/Parquet/ZSTD) | Sprint 4 (originalmente Sprint 1) | ✅ Aceptado |
+| 05 | Delta Lake vs Apache Iceberg | Sprint 4 | ✅ Aceptado |
+| 07 | AWS vs GCP como proveedor cloud | Sprint 5 | ⏳ por escribir |
 
 > La numeración empieza en 02 porque coincide con los Módulos 02, 04, 05 y 07
 > definidos en la propuesta original (sección 8 del PDF).

@@ -1,12 +1,15 @@
 """
-ingest_metro.py — Bronze · Metro afluencia diaria por estación (2022-2024).
+ingest_metro.py — Bronze · Metro afluencia horaria por línea (2022-2024).
 
-Fuente real: ArcGIS Hub Metro de Medellín (xlsx anuales).
-Fuente actual (Sprint 1): muestra sintética generada por
-scripts/generar_muestras_sinteticas.py — ArcGIS Hub bloquea descargas
-directas con 403; el archivo CSV cumple el mismo esquema lógico.
+Fuente: portal de Datos Abiertos del Metro de Medellín (ArcGIS Hub),
+descargado por `scripts/descargar_metro_afluencia_real.py` (Sprint 1.5).
+Los xlsx anuales se convierten a CSV largo: una fila por (fecha × línea × hora).
 
-Esquema CSV: fecha, estacion_id, estacion_nombre, linea, validaciones
+Esquema CSV (formato largo, real):
+    fecha (yyyy-MM-dd), linea (texto), hora (int 4..23), pasajeros (long)
+
+Granularidad: la fuente pública NO desglosa por estación — sólo por línea.
+Lo documentamos explícitamente (ADR Sprint 1.5) y respetamos ese límite.
 
 Ejecutar:
     docker compose exec -T spark-iceberg python /workspace/src/batch/bronze/ingest_metro.py
@@ -22,19 +25,20 @@ sys.path.insert(0, "/workspace/src")
 
 from pyspark.sql import functions as F
 
-from shared.bronze_utils import escribir_bronze, log_err, log_ok, log_seccion, log_warn
+from shared.bronze_utils import escribir_bronze, log_err, log_ok, log_seccion
 from shared.config import TBL_BRONZE_METRO, crear_spark_session
 
 PATRON = "/workspace/data/raw/metro_afluencia/afluencia_metro_*.csv"
-FUENTE_ID = "metro_afluencia"
+FUENTE_ID = "metro_afluencia_real"
 
 
 def main() -> int:
-    log_seccion("Bronze · Metro afluencia diaria")
+    log_seccion("Bronze · Metro afluencia horaria por línea (real)")
 
     rutas = sorted(glob.glob(PATRON))
     if not rutas:
         log_err(f"Sin archivos en {PATRON}")
+        log_err("Correr antes:  make datos-reales")
         return 1
 
     log_ok(f"Archivos a procesar: {len(rutas)}")
@@ -51,19 +55,30 @@ def main() -> int:
         .csv(rutas)
     )
 
+    # Validar que el schema real está presente
+    esperadas = {"fecha", "linea", "hora", "pasajeros"}
+    faltantes = esperadas - set(df.columns)
+    if faltantes:
+        log_err(f"Columnas faltantes en CSV: {faltantes}")
+        log_err(f"Columnas encontradas: {df.columns}")
+        return 2
+
     log_ok(f"Filas raw consolidadas: {df.count():,}")
 
-    # Forzamos tipos consistentes incluso si una de las muestras venía con int
     df = (
         df.withColumn("fecha", F.to_date("fecha"))
-          .withColumn("validaciones", F.col("validaciones").cast("long"))
+          .withColumn("hora", F.col("hora").cast("int"))
+          .withColumn("pasajeros", F.col("pasajeros").cast("long"))
+          .withColumn("linea", F.trim(F.col("linea")))
+          .filter(F.col("pasajeros") > 0)
+          .filter(F.col("hora").between(0, 23))
     )
 
     n = escribir_bronze(
         spark, df, TBL_BRONZE_METRO, FUENTE_ID,
         nombre_archivo=";".join(Path(r).name for r in rutas),
     )
-    log_ok(f"Bronze Metro listo: {n:,} filas")
+    log_ok(f"Bronze Metro listo: {n:,} filas (granularidad fecha×línea×hora)")
     return 0
 
 

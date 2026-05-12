@@ -29,6 +29,7 @@ from shared.config import (
     TBL_GOLD_AFLUENCIA_PM25,
     TBL_GOLD_CORREDORES_RIESGO,
     TBL_GOLD_ENCICLA_CLIMA,
+    TBL_GOLD_PERCENTILES_METRO,
     TBL_SILVER_AFLUENCIA,
     TBL_SILVER_AFOROS,
     TBL_SILVER_ENCICLA,
@@ -44,31 +45,38 @@ def b1(spark: SparkSession) -> int:
     log_seccion("Gold B-1 · afluencia_vs_pm25")
     af = spark.table(TBL_SILVER_AFLUENCIA)
 
-    # Granularidad: estación × mes; métricas: validaciones promedio,
-    # PM2.5 promedio del mes (de la red), precip total mensual, y la
-    # correlación intra-mes (Pearson) por estación entre PM2.5 diario y
-    # validaciones diarias.
+    # Granularidad: línea × mes (la fuente real Metro NO desglosa por estación).
+    # Métricas: pasajeros totales y promedio diario, PM2.5 promedio de la red,
+    # precipitación total mensual, y correlaciones intra-mes (Pearson) entre
+    # contaminación/lluvia y afluencia diaria.
+    diario = (
+        af.groupBy(F.col("fecha"), F.col("linea"))
+          .agg(
+              F.sum("pasajeros").alias("pasajeros_dia"),
+              F.avg("pm25_promedio_red").alias("pm25_dia"),
+              F.first("precipitacion_total_mm", ignorenulls=True).alias("precip_dia"),
+          )
+    )
+
     mensual = (
-        af.groupBy(
+        diario.groupBy(
             F.year("fecha").alias("anio"),
             F.month("fecha").alias("mes"),
-            "estacion_id",
-            "estacion_nombre",
             "linea",
         ).agg(
-            F.sum("validaciones").alias("validaciones_mes"),
-            F.avg("validaciones").alias("validaciones_promedio_dia"),
-            F.avg("pm25_promedio_red").alias("pm25_promedio_mes"),
-            F.sum("precipitacion_total_mm").alias("precipitacion_total_mes_mm"),
-            F.corr("pm25_promedio_red", "validaciones").alias("corr_pm25_validaciones"),
-            F.corr("precipitacion_total_mm", "validaciones").alias("corr_precip_validaciones"),
+            F.sum("pasajeros_dia").alias("pasajeros_mes"),
+            F.avg("pasajeros_dia").alias("pasajeros_promedio_dia"),
+            F.avg("pm25_dia").alias("pm25_promedio_mes"),
+            F.sum("precip_dia").alias("precipitacion_total_mes_mm"),
+            F.corr("pm25_dia", "pasajeros_dia").alias("corr_pm25_pasajeros"),
+            F.corr("precip_dia", "pasajeros_dia").alias("corr_precip_pasajeros"),
             F.count("*").alias("dias_observados"),
         )
     )
 
     n = mensual.count()
     mensual.writeTo(TBL_GOLD_AFLUENCIA_PM25).using("iceberg").partitionedBy("anio").createOrReplace()
-    log_ok(f"{TBL_GOLD_AFLUENCIA_PM25}: {n:,} filas (estación × mes)")
+    log_ok(f"{TBL_GOLD_AFLUENCIA_PM25}: {n:,} filas (línea × mes)")
     return n
 
 
@@ -241,6 +249,36 @@ def b4(spark: SparkSession) -> int:
     return n
 
 
+def b5_percentiles_metro(spark: SparkSession) -> int:
+    """Gold derivada · percentiles de afluencia por (línea × franja horaria).
+
+    Esta tabla es el insumo del job híbrido del Sprint 3 cuando consume Gold
+    en vivo (Sprint 4 — migración desde JSON precomputado a PyIceberg).
+    """
+    log_seccion("Gold · percentiles_metro (insumo job híbrido)")
+    af = spark.table(TBL_SILVER_AFLUENCIA)
+
+    # `franja_horaria` viene precalculada desde Silver
+    base = af.filter(F.col("pasajeros") > 0)
+
+    salida = (
+        base.groupBy("linea", "franja_horaria")
+        .agg(
+            F.expr("percentile_approx(pasajeros, 0.50)").cast("long").alias("p50"),
+            F.expr("percentile_approx(pasajeros, 0.75)").cast("long").alias("p75"),
+            F.expr("percentile_approx(pasajeros, 0.90)").cast("long").alias("p90"),
+            F.expr("percentile_approx(pasajeros, 0.95)").cast("long").alias("p95"),
+            F.count("*").cast("long").alias("muestras"),
+        )
+        .filter(F.col("muestras") >= 10)
+    )
+
+    n = salida.count()
+    salida.writeTo(TBL_GOLD_PERCENTILES_METRO).using("iceberg").createOrReplace()
+    log_ok(f"{TBL_GOLD_PERCENTILES_METRO}: {n:,} filas (línea × franja_horaria)")
+    return n
+
+
 def main() -> int:
     spark = crear_spark_session("Gold-All")
     spark.sparkContext.setLogLevel("WARN")
@@ -248,7 +286,8 @@ def main() -> int:
     b2(spark)
     b3(spark)
     b4(spark)
-    log_seccion("✅ Gold completo (B-1..B-4)")
+    b5_percentiles_metro(spark)
+    log_seccion("✅ Gold completo (B-1..B-4 + percentiles_metro)")
     return 0
 
 

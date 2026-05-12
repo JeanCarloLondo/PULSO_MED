@@ -199,12 +199,19 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       MONGO_HOST: mongodb
       PYTHONUNBUFFERED: "1"
+      # Credenciales MinIO/S3 + REST Catalog — habilitan PyIceberg en vivo
+      # desde el stream-runner (Sprint 4: job_hibrido.py lee Gold sin Spark).
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      ICEBERG_REST_URI: http://iceberg-rest:8181
+      ICEBERG_S3_ENDPOINT: http://minio:9000
     volumes:
       - ./src:/workspace/src
       - ./scripts:/workspace/scripts
       - ./data:/workspace/data
     working_dir: /workspace
-    command: ["sh", "-c", "pip install --quiet kafka-python pymongo && tail -f /dev/null"]
+    command: ["sh", "-c", "pip install --quiet kafka-python pymongo 'pyiceberg[s3fs,pyarrow]' && tail -f /dev/null"]
     networks:
       - pulsomed-net
 

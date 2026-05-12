@@ -9,9 +9,10 @@ Caso de uso:
     franja, sugiriendo que los usuarios están migrando a EnCicla/Metroplús?"
 
 Cómo funciona:
-    1. Al arranque carga `data/processed/percentiles_metro.json` (generado por
-       scripts/exportar_referencias_streaming.py a partir de los CSV REALES de
-       afluencia del Metro). Mapea (linea, franja_horaria) → p50/p75/p90/p95.
+    1. Al arranque carga los percentiles desde GOLD (Iceberg vía PyIceberg).
+       Si la tabla `demo.pulsomed.gold.percentiles_metro` no existe o el REST
+       Catalog no responde, cae al JSON precomputado
+       `data/processed/percentiles_metro.json` (estrategia robusta).
     2. Suscribe a DOS tópicos:
          · `siata.lecturas`        → mantiene última lluvia/PM2.5 del valle.
          · `metro.validaciones`    → mantiene afluencia rolling 5min por línea.
@@ -20,17 +21,20 @@ Cómo funciona:
          · Y la afluencia 5min de la línea < FACTOR × p_referencia(franja),
        emite alerta a `mongodb.pulsomed.alertas_hibridas`.
 
-Alternativa considerada (descartada en este sprint):
-    Consultar Gold (Iceberg) directamente desde el job vía PyIceberg. Requiere
-    configurar S3 endpoint, REST URI y credenciales en stream-runner. Para una
-    demostración local del Sprint 3, el JSON pre-computado es equivalente y
-    elimina dependencias. Sprint 4 evalúa la migración a una consulta live.
+Migración Sprint 4 — Iceberg en vivo:
+    En Sprint 3 este job leía SIEMPRE el JSON. Ahora intenta primero PyIceberg
+    contra el REST Catalog (variable de entorno ICEBERG_REST_URI), y sólo si
+    falla cae al JSON. Esto demuestra el valor del REST Catalog: el mismo
+    Gold que produce `make build-gold` es consumido inmediatamente por un
+    proceso streaming sin pasar por archivos intermedios.
 
 Variables:
     INTERVALO_EVAL_S        (default 10)    cada cuánto evaluar el cruce
     UMBRAL_LLUVIA_MM        (default 0.3)   precipitación 5min mínima para alerta
     FACTOR_AFLUENCIA        (default 0.7)   afluencia < 0.7 × p_referencia → alerta
     PERCENTIL_REFERENCIA    (default p90)   cuál percentil usar (p75/p90/p95)
+    FORZAR_FUENTE_JSON      (default "")    si =="1", se salta PyIceberg
+                                            (útil para tests sin el catálogo)
 """
 
 from __future__ import annotations
@@ -53,11 +57,15 @@ except ImportError:
     sys.exit(1)
 
 from shared.config import (
+    CATALOG,
     KAFKA_BOOTSTRAP,
     MONGO_DB,
     MONGO_URI,
+    NS_GOLD,
+    TBL_GOLD_PERCENTILES_METRO,
     TOPIC_METRO,
     TOPIC_SIATA,
+    WAREHOUSE_PATH,
 )
 
 JSON_PERCENTILES = Path("/workspace/data/processed/percentiles_metro.json")
@@ -67,6 +75,9 @@ INTERVALO_EVAL_S = int(os.getenv("INTERVALO_EVAL_S", "10"))
 UMBRAL_LLUVIA_MM = float(os.getenv("UMBRAL_LLUVIA_MM", "0.3"))
 FACTOR_AFLUENCIA = float(os.getenv("FACTOR_AFLUENCIA", "0.7"))
 PERCENTIL_REF = os.getenv("PERCENTIL_REFERENCIA", "p90")
+FORZAR_FUENTE_JSON = os.getenv("FORZAR_FUENTE_JSON", "") == "1"
+ICEBERG_REST_URI = os.getenv("ICEBERG_REST_URI", "http://iceberg-rest:8181")
+ICEBERG_S3_ENDPOINT = os.getenv("ICEBERG_S3_ENDPOINT", "http://minio:9000")
 
 DETENER = False
 
@@ -94,14 +105,80 @@ def _franja(hora: int) -> str:
     return "nocturno"
 
 
-def _cargar_percentiles() -> dict[str, dict[str, dict]]:
+def _cargar_percentiles_desde_iceberg() -> dict[str, dict[str, dict]] | None:
+    """Intenta cargar `demo.pulsomed.gold.percentiles_metro` vía PyIceberg.
+
+    Devuelve el mismo formato {linea: {franja: {p50,p75,p90,p95,muestras}}}
+    que el JSON, o None si la tabla no existe / falla la conexión.
+    """
+    try:
+        from pyiceberg.catalog import load_catalog
+    except ImportError:
+        print("  ⚠ pyiceberg no instalado — fallback a JSON", flush=True)
+        return None
+
+    try:
+        catalog = load_catalog(
+            "default",
+            **{
+                "type": "rest",
+                "uri": ICEBERG_REST_URI,
+                "s3.endpoint": ICEBERG_S3_ENDPOINT,
+                "s3.access-key-id": os.getenv("AWS_ACCESS_KEY_ID", ""),
+                "s3.secret-access-key": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+                "s3.region": os.getenv("AWS_REGION", "us-east-1"),
+                "warehouse": WAREHOUSE_PATH,
+            },
+        )
+        tabla_corta = TBL_GOLD_PERCENTILES_METRO.split(".", 1)[1]  # "pulsomed.gold.percentiles_metro"
+        tabla = catalog.load_table(tabla_corta)
+        df = tabla.scan().to_arrow().to_pandas()
+    except Exception as exc:
+        print(f"  ⚠ PyIceberg falló ({type(exc).__name__}: {exc}) — fallback a JSON", flush=True)
+        return None
+
+    if df.empty:
+        print("  ⚠ tabla gold.percentiles_metro vacía — fallback a JSON", flush=True)
+        return None
+
+    salida: dict[str, dict[str, dict]] = {}
+    for _, row in df.iterrows():
+        linea = row["linea"]
+        franja = row["franja_horaria"]
+        salida.setdefault(linea, {})[franja] = {
+            "p50": int(row["p50"]),
+            "p75": int(row["p75"]),
+            "p90": int(row["p90"]),
+            "p95": int(row["p95"]),
+            "muestras": int(row["muestras"]),
+        }
+    print(
+        f"→ Percentiles cargados desde ICEBERG ({TBL_GOLD_PERCENTILES_METRO}): "
+        f"{len(salida)} líneas, {len(df)} filas",
+        flush=True,
+    )
+    return salida
+
+
+def _cargar_percentiles_desde_json() -> dict[str, dict[str, dict]]:
     if not JSON_PERCENTILES.exists():
-        print(f"ERROR: falta {JSON_PERCENTILES}. Correr exportar_referencias_streaming.py", flush=True)
+        print(f"ERROR: falta {JSON_PERCENTILES} y PyIceberg también falló.", flush=True)
+        print("Correr: make build-gold  o  make exportar-referencias", flush=True)
         sys.exit(2)
     data = json.loads(JSON_PERCENTILES.read_text(encoding="utf-8"))
     valores = data.get("valores", {})
-    print(f"→ Percentiles cargados: {len(valores)} líneas", flush=True)
+    print(f"→ Percentiles cargados desde JSON precomputado: {len(valores)} líneas", flush=True)
     return valores
+
+
+def _cargar_percentiles() -> dict[str, dict[str, dict]]:
+    if FORZAR_FUENTE_JSON:
+        print("→ FORZAR_FUENTE_JSON=1 — saltando PyIceberg", flush=True)
+        return _cargar_percentiles_desde_json()
+    desde_iceberg = _cargar_percentiles_desde_iceberg()
+    if desde_iceberg is not None:
+        return desde_iceberg
+    return _cargar_percentiles_desde_json()
 
 
 class VentanaRolling5Min:
