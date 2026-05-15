@@ -4,7 +4,7 @@
 
 **Curso:** ST1630 — Sistemas Intensivos en Datos · Universidad EAFIT
 **Equipo:** Jean Carlo Londoño Ocampo · Moisés Vergara Garcés · Alejandro Garcés Ramírez
-**Estado:** Sprints 0–5 cerrados · Pipeline completo ejecutable con un solo comando
+**Estado:** Sprints 0–6 cerrados · Pipeline completo ejecutable con un solo comando · 100% rúbrica oficial cubierta
 
 ---
 
@@ -17,11 +17,12 @@
 5. [Ejecución guiada — paso por paso](#ejecución-guiada--paso-por-paso)
 6. [Demo streaming (Sprints 2 + 3)](#demo-streaming-sprints-2--3)
 7. [Análisis y consumo de resultados](#análisis-y-consumo-de-resultados)
-8. [Estructura del repositorio](#estructura-del-repositorio)
-9. [Convenciones del equipo](#convenciones-del-equipo)
-10. [Cobertura del curso](#cobertura-del-curso)
-11. [Troubleshooting](#troubleshooting)
-12. [Documentación detallada](#documentación-detallada)
+8. [Cumplimiento de la rúbrica oficial (Sprint 6)](#cumplimiento-de-la-rúbrica-oficial-sprint-6)
+9. [Estructura del repositorio](#estructura-del-repositorio)
+10. [Convenciones del equipo](#convenciones-del-equipo)
+11. [Cobertura del curso](#cobertura-del-curso)
+12. [Troubleshooting](#troubleshooting)
+13. [Documentación detallada](#documentación-detallada)
 
 ---
 
@@ -143,6 +144,8 @@ URLs útiles tras `make up`:
 | Spark UI | http://localhost:8080 | sólo visible cuando hay un job corriendo |
 | Jupyter Lab | http://localhost:8888 | sin token (imagen `tabulario/spark-iceberg`) |
 | MongoDB | mongodb://localhost:27017 | usuario/clave en `.env` |
+| Flink JobManager UI | http://localhost:8082 | tras `make flink-up`; jobs/checkpoints/lag |
+| Trino UI | http://localhost:8084/ui | tras `make trino-up` |
 
 Si `make smoke` retorna `0`, **Sprint 0 está cerrado**.
 
@@ -295,6 +298,52 @@ spark.table("demo.pulsomed.gold.red_metro_rutas_optimas").show()
 
 ---
 
+## Cumplimiento de la rúbrica oficial (Sprint 6)
+
+El Sprint 6 cerró los gaps detectados al cruzar el proyecto con `docs/Proyecto_Final_ST1630.pdf`. Detalle completo en [`docs/sprints/sprint-6-cumplimiento-rubrica.md`](docs/sprints/sprint-6-cumplimiento-rubrica.md).
+
+### Comandos de verificación
+
+```bash
+make cumplimiento-rubrica       # init-kafka-topics + iceberg-features + flink-up
+make flink-submit-alert         # somete el job PyFlink real al cluster Flink
+make stream-structured-siata    # bonus: Spark Structured Streaming → Iceberg
+```
+
+### Qué demuestra cada uno
+
+| Target | Rúbrica § | Qué prueba |
+|--------|-----------|-----------|
+| `make init-kafka-topics` | 4.3.2 | Crea los 4 tópicos con **2 particiones** + retención **7 días** vía `KafkaAdminClient`; idempotente |
+| `make iceberg-features` | 3.1 + 4.6.4 | **2 lotes append en Bronze** + **ACID** + **Time Travel** (`VERSION AS OF`) + **Schema Evolution** (`ALTER TABLE ADD COLUMN`) |
+| `make flink-up` | 3.1 + 4.4 | Levanta **JobManager + TaskManager** reales (Flink 1.18 + PyFlink + connector Kafka) |
+| `make flink-submit-alert` | 4.4.1–4.4.4 | Somete job PyFlink con **KafkaSource**, **TumblingProcessingTimeWindows**, **MongoSink**, **checkpointing at-least-once** cada 60s |
+| `make stream-structured-siata` | Bonus § 3.2 | **Spark Structured Streaming** consume Kafka → escribe a Iceberg con micro-batches de 30s |
+
+### Puertos nuevos
+
+| Servicio | URL | Para qué |
+|----------|-----|----------|
+| Flink JobManager UI | http://localhost:8082 | Estado del job, métricas, checkpoints, lag |
+| (existentes) | (Spark/Trino/MinIO/Mongo igual que antes) | — |
+
+### Cobertura final contra la rúbrica
+
+| § Rúbrica | Puntos | Estado |
+|-----------|--------|--------|
+| 4.1 Descripción del problema | 18 | ✅ Propuesta + arquitectura + 6 fuentes con esquemas |
+| 4.2 Arquitectura Docker | 12 | ✅ `docker-compose.yml` + Mermaid + README reproducible |
+| 4.3 Kafka | 12 | ✅ 4 productores + script de tópicos con 2 particiones + retención |
+| 4.4 Flink | 15 | ✅ Cluster real + job PyFlink con checkpointing |
+| 4.5 NoSQL | 12 | ✅ 5 colecciones Mongo + CLI + dashboard |
+| 4.6 Spark + Iceberg | 15 | ✅ Bronze→Silver→Gold + demo verificable de ACID/Time Travel/Schema Evolution |
+| 4.7 Integración batch↔streaming | 10 | ✅ `job_hibrido.py` (Lambda explícito) + 3 notebooks Gold |
+| 4.8 Calidad | 5 | ✅ Sin hardcodes (Trino lee `${ENV:VAR}`) + estructura por capa |
+| 4.9 Demo | 8 | (depende de la presentación) |
+| **Bonus** | **+5** | ✅ Trino (+2) + Makefile orquestado (+1) + Notebooks (+1) + Spark Structured Streaming (+1) |
+
+---
+
 ## Estructura del repositorio
 
 ```
@@ -318,7 +367,9 @@ pulso-medellin/
 │   │   └── graph/red_metro.py        # Módulo 06b Sprint 5
 │   ├── streaming/
 │   │   ├── producers/            # 4 producers Kafka (siata, encicla, simm, metro)
-│   │   └── flink_jobs/           # 4 jobs ventana + job_hibrido (PyIceberg en vivo)
+│   │   ├── flink_jobs/           # 4 jobs ventana en Python + job_hibrido (PyIceberg en vivo)
+│   │   ├── flink_real/           # job PyFlink real con checkpointing (Sprint 6)
+│   │   └── structured/           # Spark Structured Streaming bonus (Sprint 6)
 │   └── legacy/                   # Sprint 4 · MapReduce mrjob (Módulo 01)
 ├── scripts/
 │   ├── download_datasets.sh      # descarga las 6 fuentes base
@@ -326,12 +377,16 @@ pulso-medellin/
 │   ├── exportar_referencias_streaming.py
 │   ├── benchmark_formatos.py     # ADR 04 reproducible
 │   ├── init_iceberg_namespaces.py
+│   ├── init_kafka_topics.py      # Sprint 6 · tópicos 2 particiones + retención
+│   ├── demo_iceberg_features.py  # Sprint 6 · ACID + Time Travel + Schema Evolution
 │   └── consultar_alertas.py      # CLI Mongo
 ├── app/
 │   └── dashboard.py              # Streamlit (Sprint 3) — http://localhost:8501
 ├── notebooks/                    # 01_eda_gold + 02_ml_fatalidad + 03_eda_completo
 ├── tests/smoke/                  # Sprint 0 stack-health (Python + JS)
-├── docker/trino/etc/             # Configuración Trino (Sprint 5 bonus)
+├── docker/
+│   ├── trino/etc/                # Configuración Trino (Sprint 5 bonus)
+│   └── flink/Dockerfile          # Imagen Flink + PyFlink + connector Kafka (Sprint 6)
 └── data/
     ├── raw/                      # CSV/XLSX descargados (gitignored)
     └── processed/                # JSONs derivados + modelos (gitignored)

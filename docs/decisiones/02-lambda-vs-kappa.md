@@ -1,9 +1,21 @@
 # ADR 02 · Arquitectura Lambda vs Kappa
 
-**Estado:** Aceptado
-**Fecha:** 2026-05-12
+**Estado:** Aceptado · _revisado 2026-05-15 para incorporar Flink real_
+**Fecha:** 2026-05-12 (decisión original) · 2026-05-15 (revisión Sprint 6 cumplimiento rúbrica)
 **Decisores:** equipo Pulso Medellín (ST1630, EAFIT)
 **Módulo del curso:** 02 — Arquitecturas Lambda y Kappa
+
+> **Nota 2026-05-15 (Sprint 6 — cumplimiento rúbrica § 3.1 y § 4.4):** la
+> rúbrica oficial del proyecto (`docs/Proyecto_Final_ST1630.pdf`) exige
+> **Apache Flink** explícitamente como motor streaming. Sin invalidar la
+> decisión Lambda de abajo, se añadió un cluster Flink real (JobManager +
+> TaskManager) con un job PyFlink (`src/streaming/flink_real/siata_alert_flink.py`)
+> que reproduce la lógica del consumidor Python equivalente
+> (`src/streaming/flink_jobs/siata_alert_job.py`) — mismo tópico, misma
+> ventana tumbling, mismo sink Mongo, **pero con checkpointing nativo
+> at-least-once** y paralelismo distribuido. Los jobs Python se mantienen
+> como camino redundante porque ya cubren las preguntas S-1..S-4 sin
+> overhead de cluster, y materializan el "lado streaming" del patrón Lambda.
 
 ## Contexto
 

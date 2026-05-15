@@ -31,7 +31,10 @@ fi
         smoke-minio smoke-iceberg smoke-mongo \
         env-check rebuild wait-stack \
         ml-fatalidad grafo-metro trino-up trino-sql trino-demo \
-        pipeline-sprint5 all
+        pipeline-sprint5 all \
+        init-kafka-topics iceberg-features \
+        flink-up flink-submit-alert flink-ui \
+        stream-structured-siata cumplimiento-rubrica
 
 help: ## Mostrar este mensaje de ayuda
 	@echo "Pulso Medellín — comandos disponibles:"
@@ -326,6 +329,45 @@ pipeline-sprint5: ml-fatalidad grafo-metro ## [Sprint 5] Pipeline ML + Grafo end
 	@echo ""
 	@echo "Para Trino (bonus):  make trino-up && make trino-demo"
 	@echo "Para notebooks:      make jupyter"
+
+# ---------- Sprint 6 — Cumplimiento rúbrica oficial ----------
+# Estos targets cierran los gaps identificados al cruzar el proyecto con
+# `docs/Proyecto_Final_ST1630.pdf` (rúbrica oficial 2026).
+
+init-kafka-topics: env-check ## [Rúbrica § 4.3.2] Crear tópicos Kafka con ≥2 particiones + retención
+	@$(COMPOSE_EXEC) -T stream-runner python /workspace/scripts/init_kafka_topics.py
+
+iceberg-features: env-check ## [Rúbrica § 4.6.4] Demo de ACID + Time Travel + Schema Evolution + 2 lotes Bronze
+	@$(COMPOSE_EXEC) -T spark-iceberg python /workspace/scripts/demo_iceberg_features.py
+
+flink-up: env-check ## [Rúbrica § 3.1 + § 4.4] Levantar Flink JobManager + TaskManager
+	$(COMPOSE) up -d --build flink-jobmanager flink-taskmanager
+	@echo ""
+	@echo "Flink UI:   http://localhost:$${FLINK_UI_PORT:-8082}"
+	@echo "Submitir job de alerta PM2.5:  make flink-submit-alert"
+
+flink-ui: ## [Rúbrica § 4.3.3] URL del JobManager (observabilidad)
+	@echo "Flink JobManager UI: http://localhost:$${FLINK_UI_PORT:-8082}"
+
+flink-submit-alert: env-check ## [Rúbrica § 4.4] Submitir job PyFlink siata_alert con checkpointing
+	$(COMPOSE) exec -e VENTANA_MINUTOS=$${VENTANA_MINUTOS:-1} -e UMBRAL_PM25=$${UMBRAL_PM25:-75} \
+		-e PARALELISMO=$${PARALELISMO:-2} \
+		flink-jobmanager flink run --detached \
+		--python /workspace/src/streaming/flink_real/siata_alert_flink.py
+	@echo ""
+	@echo "Job sometido. Ver en http://localhost:$${FLINK_UI_PORT:-8082}/#/job/running"
+	@echo "Alertas: db.alertas_aire_flink en Mongo"
+
+stream-structured-siata: env-check ## [Bonus +1] Spark Structured Streaming: Kafka SIATA → Iceberg
+	$(COMPOSE_EXEC) -e MICRO_BATCH_S=$${MICRO_BATCH_S:-30} -e DURACION_S=$${DURACION_S:-0} \
+		spark-iceberg spark-submit \
+		--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
+		/workspace/src/streaming/structured/siata_a_iceberg_streaming.py
+
+cumplimiento-rubrica: init-kafka-topics iceberg-features flink-up ## [Rúbrica completa] Ejecuta los 3 gaps cerrados (sin Spark SS)
+	@echo ""
+	@echo "→ Para someter el job Flink:    make flink-submit-alert"
+	@echo "→ Para el bonus +1 Spark SS:    make stream-structured-siata"
 
 # ---------- make all — pipeline completo Sprint 0..5 ----------
 

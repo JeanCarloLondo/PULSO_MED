@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pulso Medellín is a course project (EAFIT, ST1630 — Sistemas Intensivos en Datos) that integrates six public mobility data sources for the Aburrá Valley into a hybrid platform: a **Lakehouse Medallion** (Bronze → Silver → Gold over Apache Iceberg + MinIO) for analytical batch questions, plus a **streaming path** (Kafka + Flink + MongoDB, planned for Sprint 2+) for operational real-time questions.
 
-Work is organized in **6 sprints**, tracked in `docs/00-roadmap.md`. As of last commit **Sprints 0-5 are closed** (incluyendo el rescate de datos reales en Sprint 1.5, los 3 ADRs + MapReduce legacy + refactor batch + job híbrido sobre Iceberg en vivo en Sprint 4, y MLlib + grafo Metro + ADR Cloud 07 + bonuses Trino/`make all`/notebook EDA cruzado en Sprint 5). El proyecto se ejecuta end-to-end con `make all`.
+Work is organized in **6 sprints + 1 cumplimiento**, tracked in `docs/00-roadmap.md`. As of last commit **Sprints 0-5 are closed** (rescate de datos reales en 1.5, ADRs + MapReduce legacy + refactor batch + job híbrido PyIceberg en 4, MLlib + grafo Metro + ADR Cloud 07 + bonuses Trino/`make all`/notebook EDA cruzado en 5), y un **Sprint 6 de cumplimiento de rúbrica** (`docs/sprints/sprint-6-cumplimiento-rubrica.md`) añadió Apache Flink real con job PyFlink + checkpointing, script de tópicos Kafka con ≥2 particiones + retención, demo verificable de ACID/Time Travel/Schema Evolution con 2 lotes Bronze, y un job Spark Structured Streaming como bonus. El proyecto se ejecuta end-to-end con `make all` y se valida contra la rúbrica con `make cumplimiento-rubrica`.
 
 ## Common commands
 

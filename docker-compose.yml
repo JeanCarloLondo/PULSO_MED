@@ -19,6 +19,7 @@ networks:
 volumes:
   minio-data:
   mongo-data:
+  flink-checkpoints:
 
 services:
 
@@ -212,6 +213,79 @@ services:
       - ./data:/workspace/data
     working_dir: /workspace
     command: ["sh", "-c", "pip install --quiet kafka-python pymongo 'pyiceberg[s3fs,pyarrow]' && tail -f /dev/null"]
+    networks:
+      - pulsomed-net
+
+  # ======================================================================
+  # [SPRINT 6]  Apache Flink — motor streaming requerido por rúbrica § 3.1
+  # ----------------------------------------------------------------------
+  # JobManager + TaskManager con PyFlink 1.18 y connector Kafka. Se mantiene
+  # el `stream-runner` Python como complemento (jobs Sprint 2/3 y Spark
+  # Structured Streaming bonus). El job PyFlink real vive en
+  # `src/streaming/flink_real/siata_alert_flink.py` y demuestra:
+  #   · KafkaSource conectado a `siata.lecturas`
+  #   · Tumbling window (event-time/processing-time configurable)
+  #   · Sink NoSQL hacia MongoDB
+  #   · Checkpointing con semántica at-least-once
+  # ======================================================================
+
+  flink-jobmanager:
+    build:
+      context: ./docker/flink
+    image: pulsomed/flink:1.18-pyflink
+    container_name: pulsomed-flink-jobmanager
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - mongodb
+    ports:
+      - "${FLINK_UI_PORT:-8082}:8081"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.memory.process.size: 1024m
+        rest.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+        state.backend: hashmap
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        execution.checkpointing.interval: 60000
+        execution.checkpointing.mode: AT_LEAST_ONCE
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_HOST: mongodb
+    volumes:
+      - ./src:/workspace/src
+      - ./scripts:/workspace/scripts
+      - flink-checkpoints:/tmp/flink-checkpoints
+    networks:
+      - pulsomed-net
+
+  flink-taskmanager:
+    image: pulsomed/flink:1.18-pyflink
+    container_name: pulsomed-flink-taskmanager
+    restart: unless-stopped
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.memory.process.size: 1536m
+        taskmanager.numberOfTaskSlots: 2
+        state.backend: hashmap
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_HOST: mongodb
+    volumes:
+      - ./src:/workspace/src
+      - ./scripts:/workspace/scripts
+      - flink-checkpoints:/tmp/flink-checkpoints
     networks:
       - pulsomed-net
 
