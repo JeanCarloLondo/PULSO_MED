@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pulso Medellín is a course project (EAFIT, ST1630 — Sistemas Intensivos en Datos) that integrates six public mobility data sources for the Aburrá Valley into a hybrid platform: a **Lakehouse Medallion** (Bronze → Silver → Gold over Apache Iceberg + MinIO) for analytical batch questions, plus a **streaming path** (Kafka + Flink + MongoDB, planned for Sprint 2+) for operational real-time questions.
 
-Work is organized in **6 sprints**, tracked in `docs/00-roadmap.md`. As of last commit Sprints 0-4 are closed (incluyendo el rescate de datos reales en Sprint 1.5 y los 3 ADRs + MapReduce legacy + refactor batch + job híbrido sobre Iceberg en vivo en Sprint 4). Sprint 5 (MLlib, GraphFrames, ADR Cloud + Ley 1581/1712, bonuses Trino/Makefile end-to-end/notebook EDA cruzado) is the next one.
+Work is organized in **6 sprints**, tracked in `docs/00-roadmap.md`. As of last commit **Sprints 0-5 are closed** (incluyendo el rescate de datos reales en Sprint 1.5, los 3 ADRs + MapReduce legacy + refactor batch + job híbrido sobre Iceberg en vivo en Sprint 4, y MLlib + grafo Metro + ADR Cloud 07 + bonuses Trino/`make all`/notebook EDA cruzado en Sprint 5). El proyecto se ejecuta end-to-end con `make all`.
 
 ## Common commands
 

@@ -12,4 +12,4 @@ Para el plan global (qué sprint cubre qué), ver [`../00-roadmap.md`](../00-roa
 | 2 | [`sprint-2-streaming.md`](sprint-2-streaming.md) | ✅ cerrado |
 | 3 | [`sprint-3-streaming-completo.md`](sprint-3-streaming-completo.md) | ✅ cerrado (incluye Sprint 1.5 rescate datos reales) |
 | 4 | [`sprint-4-legacy-y-adrs.md`](sprint-4-legacy-y-adrs.md) | ✅ cerrado (ADRs 02/04/05 + MapReduce + refactor batch + PyIceberg vivo) |
-| 5 | `sprint-5-ml-cloud-bonus.md` | ⏳ por crear (MLlib, GraphFrames, ADR 07, Trino, EDA cruzado) |
+| 5 | [`sprint-5-ml-cloud-bonus.md`](sprint-5-ml-cloud-bonus.md) | ✅ cerrado (MLlib + Grafo Metro + ADR 07 + Trino + `make all` + EDA cruzado) |
