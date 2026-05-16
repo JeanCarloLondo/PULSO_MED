@@ -4,7 +4,7 @@
 
 **Curso:** ST1630 — Sistemas Intensivos en Datos · Universidad EAFIT
 **Equipo:** Jean Carlo Londoño Ocampo · Moisés Vergara Garcés · Alejandro Garcés Ramírez
-**Estado:** Sprints 0–6 cerrados · Pipeline completo ejecutable con un solo comando · 100% rúbrica oficial cubierta
+**Estado:** Sprints 0–7 cerrados · Pipeline completo ejecutable con un solo comando · 100% rúbrica oficial cubierta · Informe BI en Apache Superset
 
 ---
 
@@ -18,6 +18,7 @@
 6. [Demo streaming (Sprints 2 + 3)](#demo-streaming-sprints-2--3)
 7. [Análisis y consumo de resultados](#análisis-y-consumo-de-resultados)
 8. [Cumplimiento de la rúbrica oficial (Sprint 6)](#cumplimiento-de-la-rúbrica-oficial-sprint-6)
+8b. [Informe BI · Apache Superset (Sprint 7)](#informe-bi--apache-superset-sprint-7)
 9. [Estructura del repositorio](#estructura-del-repositorio)
 10. [Convenciones del equipo](#convenciones-del-equipo)
 11. [Cobertura del curso](#cobertura-del-curso)
@@ -344,6 +345,55 @@ make stream-structured-siata    # bonus: Spark Structured Streaming → Iceberg
 
 ---
 
+## Informe BI · Apache Superset (Sprint 7)
+
+El proyecto entrega su **informe final** en una herramienta BI real:
+[Apache Superset](https://superset.apache.org/) conectado a Trino sobre el
+mismo lakehouse Iceberg. Detalle completo en
+[`docs/sprints/sprint-7-bi-superset.md`](docs/sprints/sprint-7-bi-superset.md).
+
+### Levantar la herramienta BI
+
+```bash
+# 1. Asegurarse de que Trino y el pipeline batch están listos
+make trino-up                    # (si no, también: make all)
+
+# 2. Construir y levantar Superset
+make bi-up                       # build de imagen + arranque (1ª vez ~3 min)
+
+# 3. Bootstrap: admin + datasources Trino + SQLite metadatos
+make bi-init                     # idempotente
+```
+
+UI en http://localhost:8088 · usuario `admin` · clave `admin`.
+
+### Qué incluye el informe BI
+
+Cuatro tableros, uno por cada eje pedido al inicio del proyecto:
+
+| Tablero | Fuente | Contenido |
+|---------|--------|-----------|
+| **Hallazgos de datos** | `pulsomed_bi_meta.hallazgos` + `iceberg.pulsomed.gold.*` | 12 preguntas respondidas (B-1..B-4, S-1..S-4, híbrida 4.3, ML, Grafo) con consulta SQL en vivo |
+| **Decisiones técnicas** | `pulsomed_bi_meta.decisiones` | 4 ADRs firmados + 3 decisiones Sprint 6 + decisión BI = 8 |
+| **Herramientas y por qué** | `pulsomed_bi_meta.herramientas` | 16 herramientas con capa, razón de uso, alternativa descartada y sprint de introducción |
+| **Cumplimiento de la rúbrica** | `pulsomed_bi_meta.cumplimiento_rubrica` | Checklist 100/100 + bonus +5 con evidencia por sección |
+
+Los metadatos los genera `scripts/generar_metadatos_bi.py` a partir de los
+`.md` del proyecto (ADRs, sprints, propuesta) — son la fuente única de
+verdad del informe.
+
+### Comandos BI
+
+```bash
+make bi-metadatos        # regenera 4 CSVs + SQLite a partir de los .md
+make bi-up               # build + up del servicio Superset
+make bi-init             # crea admin + registra datasources Trino y SQLite
+make bi-logs             # tail de logs
+make bi-down             # stop (preserva metadata + datasources)
+```
+
+---
+
 ## Estructura del repositorio
 
 ```
@@ -421,6 +471,7 @@ pulso-medellin/
 | Bonus 1 — Trino (+2 pt) | Sprint 5 | Servicio Trino sobre las mismas tablas Iceberg |
 | Bonus 2 — `make all` end-to-end (+1 pt) | Sprint 5 | `Makefile` target `all` |
 | Bonus 3 — Notebook EDA cruzado (+1 pt) | Sprint 5 | `notebooks/03_eda_completo.ipynb` |
+| Informe BI — herramienta a elección | Sprint 7 | Apache Superset · `make bi-up && make bi-init` |
 
 ---
 
@@ -455,6 +506,8 @@ Más diagnóstico operativo por sprint en `docs/sprints/sprint-N-*.md`.
 | [`docs/sprints/sprint-3-streaming-completo.md`](docs/sprints/sprint-3-streaming-completo.md) | S-1..S-4 + job híbrido + dashboard |
 | [`docs/sprints/sprint-4-legacy-y-adrs.md`](docs/sprints/sprint-4-legacy-y-adrs.md) | MapReduce mrjob + ADRs 02/04/05 + refactor datos reales |
 | [`docs/sprints/sprint-5-ml-cloud-bonus.md`](docs/sprints/sprint-5-ml-cloud-bonus.md) | MLlib + Grafo + ADR 07 + Trino + EDA cruzado |
+| [`docs/sprints/sprint-6-cumplimiento-rubrica.md`](docs/sprints/sprint-6-cumplimiento-rubrica.md) | Flink real + Kafka topics + Iceberg features + Structured Streaming |
+| [`docs/sprints/sprint-7-bi-superset.md`](docs/sprints/sprint-7-bi-superset.md) | Informe BI en Apache Superset + guion de demo |
 | [`docs/decisiones/`](docs/decisiones/) | ADRs firmados (02, 04, 05, 07) |
 | [`CLAUDE.md`](CLAUDE.md) | Guía para asistentes IA que trabajen en el repo |
 

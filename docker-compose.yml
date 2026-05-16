@@ -20,6 +20,7 @@ volumes:
   minio-data:
   mongo-data:
   flink-checkpoints:
+  superset-home:
 
 services:
 
@@ -310,3 +311,46 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     networks:
       - pulsomed-net
+
+  # ======================================================================
+  # [SPRINT 7]  Apache Superset — herramienta BI para el informe final
+  # ----------------------------------------------------------------------
+  # Superset se conecta a Trino (lakehouse Iceberg, capa Gold) y a un SQLite
+  # con los metadatos del proyecto (decisiones, herramientas, hallazgos,
+  # cumplimiento de rúbrica). Los tableros sirven la demo final.
+  #
+  # Bootstrap (admin + datasources): `make bi-init`.
+  # Acceso UI: http://localhost:${SUPERSET_PORT:-8088}  ·  admin / admin
+  # ======================================================================
+
+  superset:
+    build:
+      context: ./docker/superset
+    image: pulsomed/superset:4.0
+    container_name: pulsomed-superset
+    restart: unless-stopped
+    depends_on:
+      trino:
+        condition: service_started
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-pulsomed-superset-demo-secret-cambiar-en-produccion}
+      SUPERSET_LOAD_EXAMPLES: "no"
+      # Credenciales MinIO/Trino disponibles por si algún notebook BI las usa.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      PYTHONPATH: /app/pythonpath
+    volumes:
+      - superset-home:/app/superset_home
+      - ./docker/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./data/processed/bi:/app/bi-data:ro
+      - ./scripts:/workspace/scripts:ro
+    networks:
+      - pulsomed-net
+    command: >
+      /bin/bash -c "
+      superset db upgrade &&
+      superset init &&
+      /usr/bin/run-server.sh
+      "

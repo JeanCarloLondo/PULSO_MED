@@ -34,7 +34,8 @@ fi
         pipeline-sprint5 all \
         init-kafka-topics iceberg-features \
         flink-up flink-submit-alert flink-ui \
-        stream-structured-siata cumplimiento-rubrica
+        stream-structured-siata cumplimiento-rubrica \
+        bi-up bi-metadatos bi-init bi-down bi-logs
 
 help: ## Mostrar este mensaje de ayuda
 	@echo "Pulso Medellín — comandos disponibles:"
@@ -369,6 +370,28 @@ cumplimiento-rubrica: init-kafka-topics iceberg-features flink-up ## [Rúbrica c
 	@echo "→ Para someter el job Flink:    make flink-submit-alert"
 	@echo "→ Para el bonus +1 Spark SS:    make stream-structured-siata"
 
+# ---------- Sprint 7 — BI (Apache Superset) ----------
+
+bi-metadatos: ## [Sprint 7] Generar CSVs + SQLite con hallazgos, decisiones, herramientas y rúbrica
+	@$(PYTHON_HOST) scripts/generar_metadatos_bi.py
+
+bi-up: env-check bi-metadatos ## [Sprint 7] Construir y levantar Apache Superset (requiere Trino corriendo)
+	$(COMPOSE) up -d --build superset
+	@echo ""
+	@echo "Superset arrancando — la primera vez tarda ~60s (db upgrade + init)."
+	@echo "  · UI:        http://localhost:$${SUPERSET_PORT:-8088}"
+	@echo "  · Logs:      make bi-logs"
+	@echo "  · Bootstrap: make bi-init   (admin + datasources Trino/SQLite)"
+
+bi-init: ## [Sprint 7] Crear admin y registrar datasources (Trino + SQLite metadatos) — idempotente
+	@bash scripts/bootstrap_superset.sh
+
+bi-logs: ## [Sprint 7] Ver logs de Superset
+	$(COMPOSE) logs -f --tail=100 superset
+
+bi-down: ## [Sprint 7] Apagar sólo Superset (conserva metadata + datasources)
+	$(COMPOSE) stop superset
+
 # ---------- make all — pipeline completo Sprint 0..5 ----------
 
 all: env-check up init-namespaces pipeline-batch pipeline-legacy pipeline-sprint5 ## Orquesta el pipeline completo Sprint 0→5 end-to-end
@@ -382,4 +405,5 @@ all: env-check up init-namespaces pipeline-batch pipeline-legacy pipeline-sprint
 	@echo "║  Trino SQL:       make trino-up && make trino-sql    ║"
 	@echo "║  Dashboard:       make dashboard                     ║"
 	@echo "║  Jupyter:         make jupyter                       ║"
+	@echo "║  BI Superset:     make bi-up && make bi-init         ║"
 	@echo "╚══════════════════════════════════════════════════════╝"
