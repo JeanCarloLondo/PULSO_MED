@@ -76,3 +76,5 @@ kafka-data/
 
 # ---------- Claude Code local ----------
 .claude/
+.venv-mrjob/
+.venv-dash/

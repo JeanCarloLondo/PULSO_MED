@@ -48,7 +48,7 @@ from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaSource,
 )
-from pyflink.datastream.functions import ProcessWindowFunction, SinkFunction
+from pyflink.datastream.functions import ProcessWindowFunction
 from pyflink.datastream.window import TumblingProcessingTimeWindows
 
 
@@ -121,31 +121,23 @@ class AgregadorVentana(ProcessWindowFunction):
 # implementamos con `MapFunction`-style usando pymongo. La conexión se
 # materializa en cada TaskManager la primera vez que se procesa un evento.
 
-class MongoSink(SinkFunction):
-    """Sink Python que persiste cada documento en MongoDB."""
-
-    def __init__(self) -> None:
-        super().__init__(self)
-        self._cli = None
-
-    def _coll(self):
-        if self._cli is None:
-            from pymongo import MongoClient
-            self._cli = MongoClient(MONGO_URI)
-            coll = self._cli["pulsomed"][COL_ALERTAS]
-            try:
-                coll.create_index([("zona", 1), ("ventana_inicio", 1)], unique=True)
-            except Exception:
-                pass
-        return self._cli["pulsomed"][COL_ALERTAS]
-
-    def invoke(self, value, context):
+def _escribir_mongo(value):
+    """Escribe la alerta en MongoDB; compatible con PyFlink map (no usa add_sink)."""
+    try:
+        from pymongo import MongoClient
+        cli = MongoClient(MONGO_URI)
+        coll = cli["pulsomed"][COL_ALERTAS]
         try:
-            self._coll().insert_one(dict(value))
-        except Exception as exc:
-            msg = str(exc).lower()
-            if "duplicate" not in msg and "e11000" not in msg:
-                print(f"  ⚠ Mongo sink: {exc}", flush=True)
+            coll.create_index([("zona", 1), ("ventana_inicio", 1)], unique=True)
+        except Exception:
+            pass
+        coll.insert_one(dict(value))
+        cli.close()
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "duplicate" not in msg and "e11000" not in msg:
+            print(f"  ⚠ Mongo: {exc}", flush=True)
+    return value
 
 
 # ── Construcción del pipeline ---------------------------------------------------
@@ -196,7 +188,7 @@ def main() -> None:
         )
     )
 
-    flujo.add_sink(MongoSink()).name("mongo-sink-alertas")
+    flujo.map(_escribir_mongo, output_type=Types.MAP(Types.STRING(), Types.STRING())).print()
 
     env.execute("pulsomed-siata-alert-flink")
 

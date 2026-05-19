@@ -253,10 +253,10 @@ services:
         state.checkpoints.dir: file:///tmp/flink-checkpoints
         execution.checkpointing.interval: 60000
         execution.checkpointing.mode: AT_LEAST_ONCE
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
-      MONGO_HOST: mongodb
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+      - MONGO_HOST=mongodb
     volumes:
       - ./src:/workspace/src
       - ./scripts:/workspace/scripts
@@ -279,10 +279,10 @@ services:
         taskmanager.numberOfTaskSlots: 2
         state.backend: hashmap
         state.checkpoints.dir: file:///tmp/flink-checkpoints
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
-      MONGO_HOST: mongodb
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+      - MONGO_HOST=mongodb
     volumes:
       - ./src:/workspace/src
       - ./scripts:/workspace/scripts

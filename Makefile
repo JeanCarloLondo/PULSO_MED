@@ -251,8 +251,12 @@ stream-hibrido: env-check ## [Sprint 3] Job híbrido batch↔streaming (sección
 		stream-runner python -u /workspace/src/streaming/flink_jobs/job_hibrido.py
 
 dashboard: ## [Sprint 3] Levantar dashboard Streamlit (host)
-	@which streamlit > /dev/null || pip3 install streamlit pymongo pandas pydeck
-	@MONGO_HOST=localhost streamlit run app/dashboard.py
+	@if [ ! -f .venv-dash/bin/streamlit ]; then \
+		echo "→ Creando virtualenv para Streamlit..."; \
+		$(PYTHON_HOST) -m venv .venv-dash && \
+		.venv-dash/bin/pip install --quiet streamlit pymongo pandas pydeck; \
+	fi
+	@MONGO_HOST=localhost .venv-dash/bin/streamlit run app/dashboard.py
 
 pipeline-streaming-completo: stream-up exportar-referencias ## [Sprint 3] Stack streaming + referencias listas
 	@echo ""
@@ -279,9 +283,13 @@ legacy-generar: ## [Sprint 4] Generar CSV legacy pre/post-2017 (módulo 01)
 	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) src/legacy/generar_dataset_legacy.py
 
 legacy-mapreduce: ## [Sprint 4] Correr el job mrjob (host, modo inline)
-	@which mrjob >/dev/null 2>&1 || pip3 install --quiet mrjob
+	@if [ ! -f .venv-mrjob/bin/mrjob ]; then \
+		echo "→ Creando virtualenv para mrjob..."; \
+		$(PYTHON_HOST) -m venv .venv-mrjob && \
+		.venv-mrjob/bin/pip install --quiet setuptools mrjob; \
+	fi
 	@rm -rf data/processed/incidentes_normalizados
-	@PYTHONIOENCODING=utf-8 $(PYTHON_HOST) src/legacy/mapreduce_incidentes.py \
+	@PYTHONIOENCODING=utf-8 .venv-mrjob/bin/python src/legacy/mapreduce_incidentes.py \
 		data/raw/medata_legacy/incidentes_pre2017.csv \
 		data/raw/medata_legacy/incidentes_post2017.csv \
 		--output-dir data/processed/incidentes_normalizados
@@ -351,6 +359,7 @@ flink-ui: ## [Rúbrica § 4.3.3] URL del JobManager (observabilidad)
 	@echo "Flink JobManager UI: http://localhost:$${FLINK_UI_PORT:-8082}"
 
 flink-submit-alert: env-check ## [Rúbrica § 4.4] Submitir job PyFlink siata_alert con checkpointing
+	@$(COMPOSE) exec -u root flink-jobmanager chmod 777 /tmp/flink-checkpoints
 	$(COMPOSE) exec -e VENTANA_MINUTOS=$${VENTANA_MINUTOS:-1} -e UMBRAL_PM25=$${UMBRAL_PM25:-75} \
 		-e PARALELISMO=$${PARALELISMO:-2} \
 		flink-jobmanager flink run --detached \
